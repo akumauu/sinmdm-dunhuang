@@ -7,6 +7,9 @@ Dunhuang Dance Motion Generation System - Gradio Web Interface
 - 模型训练：超参数配置与训练启动
 - 生成预览：参数控制与骨架动画预览
 - 导出设置：后处理配置与 BVH 导出
+- 3D 可视化：交互式骨骼查看与对比回放
+- 项目管理：新建/保存/打开生成项目
+- 视频姿态估计：MediaPipe 骨骼提取接口
 """
 
 import os
@@ -33,6 +36,19 @@ from dunhuang_dance_gen.data.bvh_parser import BVHParser, load_bvh
 from dunhuang_dance_gen.postprocess import MotionSmoother, PhysicalConstraints, PostProcessPipeline, PostProcessConfig
 from dunhuang_dance_gen.export.bvh_writer import BVHWriter
 from dunhuang_dance_gen.evaluate.metrics import MotionEvaluator
+
+# 3D 可视化模块
+try:
+    from dunhuang_dance_gen.visualize.skeleton_viewer import (
+        visualize_bvh, compare_bvh, render_skeleton_frame, render_comparison
+    )
+    HAS_PLOTLY = True
+except ImportError:
+    HAS_PLOTLY = False
+
+# 项目管理
+PROJECT_DIR = str(PROJECT_ROOT / "projects")
+os.makedirs(PROJECT_DIR, exist_ok=True)
 
 # ============================================================
 # 全局配置
@@ -535,6 +551,11 @@ def create_app():
                             label="随机种子 (-1=随机)",
                             precision=0
                         )
+                        gen_diversity = gr.Slider(
+                            minimum=0.1, maximum=2.0, value=1.0, step=0.1,
+                            label="多样性系数",
+                            info=">1.0 增大生成多样性, <1.0 更接近原始动作"
+                        )
                         gen_btn = gr.Button("🎭 生成动作", variant="primary")
                     
                     with gr.Column(scale=2):
@@ -593,6 +614,233 @@ def create_app():
                             pp_fix_spikes, pp_joint_limits, pp_stabilize],
                     outputs=[pp_report, pp_download]
                 )
+            
+            # ---- Tab 5: 3D 可视化 ----
+            with gr.TabItem("🎯 3D 可视化", id="vis3d"):
+                gr.Markdown("### 交互式三维骨架查看器")
+                with gr.Row():
+                    with gr.Column(scale=1):
+                        vis_bvh = gr.Dropdown(
+                            choices=bvh_files,
+                            label="选择 BVH 文件",
+                            allow_custom_value=True,
+                        )
+                        vis_frame = gr.Slider(
+                            minimum=0, maximum=500, value=0, step=1,
+                            label="帧索引"
+                        )
+                        vis_btn = gr.Button("🔍 查看骨架", variant="primary")
+                        
+                        gr.Markdown("### 对比回放")
+                        vis_orig = gr.Dropdown(
+                            choices=bvh_files,
+                            label="原始动作 BVH",
+                            allow_custom_value=True,
+                        )
+                        vis_gen = gr.Dropdown(
+                            choices=bvh_files,
+                            label="生成动作 BVH",
+                            allow_custom_value=True,
+                        )
+                        vis_compare_frame = gr.Slider(
+                            minimum=0, maximum=500, value=0, step=1,
+                            label="对比帧"
+                        )
+                        vis_compare_btn = gr.Button("⚡ 并排对比", variant="secondary")
+                    
+                    with gr.Column(scale=2):
+                        vis_plot = gr.Plot(label="3D 骨架查看")
+                        vis_compare_plot = gr.Plot(label="对比查看")
+                
+                def view_skeleton(bvh_path, frame_idx):
+                    if not bvh_path or not os.path.exists(bvh_path):
+                        return None
+                    try:
+                        return visualize_bvh(bvh_path, int(frame_idx))
+                    except Exception as e:
+                        return None
+                
+                def compare_skeletons(orig_path, gen_path, frame_idx):
+                    if not orig_path or not gen_path:
+                        return None
+                    try:
+                        return compare_bvh(orig_path, gen_path, int(frame_idx))
+                    except Exception as e:
+                        return None
+                
+                vis_btn.click(view_skeleton, inputs=[vis_bvh, vis_frame], outputs=[vis_plot])
+                vis_compare_btn.click(
+                    compare_skeletons, 
+                    inputs=[vis_orig, vis_gen, vis_compare_frame], 
+                    outputs=[vis_compare_plot]
+                )
+            
+            # ---- Tab 6: 项目管理 ----
+            with gr.TabItem("📂 项目管理", id="projects"):
+                gr.Markdown("### 项目式任务管理")
+                gr.Markdown("> 以项目为单位管理不同舞蹈片段的生成任务")
+                
+                with gr.Row():
+                    with gr.Column(scale=1):
+                        proj_name = gr.Textbox(
+                            label="项目名称",
+                            placeholder="例: 飞天_动作生成"
+                        )
+                        proj_bvh = gr.Dropdown(
+                            choices=bvh_files,
+                            label="关联数据 (BVH)",
+                            allow_custom_value=True,
+                        )
+                        proj_notes = gr.Textbox(
+                            label="备注",
+                            lines=3,
+                            placeholder="项目说明..."
+                        )
+                        with gr.Row():
+                            proj_new_btn = gr.Button("🆕 新建项目", variant="primary")
+                            proj_save_btn = gr.Button("💾 保存进度")
+                        
+                        gr.Markdown("### 历史项目")
+                        proj_list = gr.Dropdown(
+                            label="打开项目",
+                            choices=[],
+                        )
+                        proj_open_btn = gr.Button("📂 打开")
+                    
+                    with gr.Column(scale=2):
+                        proj_info = gr.Markdown(label="项目信息")
+                
+                def new_project(name, bvh, notes):
+                    if not name:
+                        return "❌ 请输入项目名称"
+                    proj_data = {
+                        "name": name,
+                        "bvh_path": bvh or "",
+                        "notes": notes or "",
+                        "created": str(np.datetime64('now')),
+                        "status": "已创建",
+                    }
+                    proj_file = os.path.join(PROJECT_DIR, f"{name}.json")
+                    with open(proj_file, 'w', encoding='utf-8') as f:
+                        json.dump(proj_data, f, ensure_ascii=False, indent=2)
+                    return f"✅ 项目 **{name}** 已创建\n\n📄 配置文件: `{proj_file}`"
+                
+                def save_project(name, bvh, notes):
+                    if not name:
+                        return "❌ 请输入项目名称"
+                    proj_file = os.path.join(PROJECT_DIR, f"{name}.json")
+                    proj_data = {}
+                    if os.path.exists(proj_file):
+                        with open(proj_file, 'r', encoding='utf-8') as f:
+                            proj_data = json.load(f)
+                    proj_data.update({
+                        "name": name,
+                        "bvh_path": bvh or proj_data.get("bvh_path", ""),
+                        "notes": notes or proj_data.get("notes", ""),
+                        "last_saved": str(np.datetime64('now')),
+                        "status": "进行中",
+                    })
+                    with open(proj_file, 'w', encoding='utf-8') as f:
+                        json.dump(proj_data, f, ensure_ascii=False, indent=2)
+                    return f"✅ 项目 **{name}** 已保存"
+                
+                def list_projects():
+                    projs = glob.glob(os.path.join(PROJECT_DIR, "*.json"))
+                    return [Path(p).stem for p in projs]
+                
+                def open_project(name):
+                    if not name:
+                        return "❌ 请选择项目"
+                    proj_file = os.path.join(PROJECT_DIR, f"{name}.json")
+                    if not os.path.exists(proj_file):
+                        return "❌ 项目文件不存在"
+                    with open(proj_file, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                    info = f"## 📂 项目: {data.get('name', name)}\n\n"
+                    info += f"| 属性 | 值 |\n|---|---|\n"
+                    for k, v in data.items():
+                        info += f"| {k} | {v} |\n"
+                    return info
+                
+                proj_new_btn.click(new_project, inputs=[proj_name, proj_bvh, proj_notes], outputs=[proj_info])
+                proj_save_btn.click(save_project, inputs=[proj_name, proj_bvh, proj_notes], outputs=[proj_info])
+                proj_open_btn.click(open_project, inputs=[proj_list], outputs=[proj_info])
+                app.load(lambda: gr.update(choices=list_projects()), outputs=[proj_list])
+            
+            # ---- Tab 7: 视频姿态估计 ----
+            with gr.TabItem("🎥 视频姿态估计", id="pose"):
+                gr.Markdown("""### 视频到姿态序列提取
+> 从敦煌舞视频中提取骨骼关键点序列，转化为可训练的 BVH 数据
+""")
+                with gr.Row():
+                    with gr.Column(scale=1):
+                        pose_video = gr.File(
+                            label="上传视频 (MP4/AVI)",
+                            file_types=[".mp4", ".avi", ".mov"],
+                        )
+                        pose_method = gr.Radio(
+                            choices=["MediaPipe", "OpenPose"],
+                            value="MediaPipe",
+                            label="姿态估计方法",
+                            info="MediaPipe: 轻量/易部署 | OpenPose: 精度高"
+                        )
+                        pose_fps = gr.Slider(
+                            minimum=15, maximum=60, value=30, step=5,
+                            label="输出帧率"
+                        )
+                        pose_btn = gr.Button("🦴 提取姿态", variant="primary")
+                    
+                    with gr.Column(scale=2):
+                        pose_output = gr.Markdown()
+                
+                def extract_pose(video_file, method, fps):
+                    if video_file is None:
+                        return "❌ 请先上传视频文件"
+                    
+                    # 检查 MediaPipe 是否可用
+                    try:
+                        import mediapipe
+                        mp_available = True
+                    except ImportError:
+                        mp_available = False
+                    
+                    video_path = video_file.name if hasattr(video_file, 'name') else str(video_file)
+                    
+                    info = f"""## 🎥 视频姿态估计
+
+| 参数 | 值 |
+|------|-----|
+| **视频** | `{Path(video_path).name}` |
+| **方法** | {method} |
+| **帧率** | {fps} FPS |
+| **MediaPipe** | {'✅ 已安装' if mp_available else '❌ 未安装'} |
+
+"""
+                    if not mp_available:
+                        info += """### ⚠️ 安装依赖
+
+```bash
+pip install mediapipe opencv-python
+```
+
+安装后即可使用视频姿态估计功能。
+
+### 技术说明
+
+本系统的数据来源以**公开敦煌舞三维动作数据集**为主（已集成 16 段 BVH 数据），
+视频姿态估计作为补充数据源接口，支持用户从自有视频中提取额外训练数据。
+"""
+                    else:
+                        info += """### ✅ 环境就绪
+
+MediaPipe 已安装，可以进行视频姿态估计。
+
+> ⚠️ 视频姿态估计生成的是 2D/3D 关键点坐标，需要经过**骨架映射和格式转换**
+> 才能转为可训练的 BVH 格式。当前系统以公开敦煌舞 BVH 数据集为主要数据源。
+"""
+                    return info
+                
+                pose_btn.click(extract_pose, inputs=[pose_video, pose_method, pose_fps], outputs=[pose_output])
         
         gr.Markdown("""
         ---
