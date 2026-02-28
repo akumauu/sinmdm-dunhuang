@@ -1,0 +1,48 @@
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+venv311/
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# PyTorch
+*.pt
+*.pth
+
+# Project specific ignores
+save/
+outputs/
+output_gui/
+敦煌舞三维动作数据集/
+data.zip
+bvh_only2.zip
+dunhuang_long_motions.zip
+t2m.zip
+docs/project_status.md.bak
+
+# Exclude all generated BVH files but keep those in dunhuang_dance_gen if any
+*.mp4
+*.gif
+*.npy
+
+# IDEs
+.idea/
+.vscode/
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Temp/debug files
+ls_files*.txt
+status*.txt
+test_err.log
+*.bak

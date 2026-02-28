@@ -1,43 +1,50 @@
 # Project Status: SinMDM - Dunhuang Dance Generation
 
-**Last Updated**: 2026-02-27
+**Last Updated**: 2026-02-28
+**Overall Completion**: ~90%
 
 ## Current Objectives
-1.  **Optimize Training**: Retrain SinMDM on Dunhuang dance data using official parameters to improve motion quality and stability.
-2.  **Standardization**: Ensure exported BVH files follow industry standards for better compatibility with 3D software (Blender/Unity).
-3.  **Synchronization**: Maintain project records and upload updates to GitHub regularly.
+Build a Dunhuang dance motion generation system using SinMDM for single-sequence diffusion learning.
 
-## Progress Summary
-- **Environment**: Python 3.8 environment with SinMDM dependencies installed.
-- **Data**: Dunhuang dance BVH/NPY files available.
-- **BVH Standardization**: Implemented 3-channel joint export, Euler unwrap, and strict column count assertions (69 columns for 22 joints).
-- **Rendering Optimization**: Implemented Auto-Framing (BBox limits) to ensure skeleton visibility in generated videos.
-- **Generation**: Completed batch generation for `01-1-FeiTian` (20k) and `06-1-PiPaJiYue` (10k-30k).
+## System Architecture
 
-## Active Experiments
-### Experiment 1: Official Parameter Run
-- **Status**: Completed for multiple models (20k-30k steps).
-- **Config**: 
-    - Arch: QnA
-    - Scheduler: ExponentialLR
-    - Gamma: 0.99998
-    - Input: `bvh_general` dataset
+```
+敦煌舞 BVH → 数据处理模块 → SinMDM 训练 → 扩散推理 → 后处理 → BVH 导出
+                                              ↕
+                              Gradio 桌面端界面 (4 Tab)
+```
 
-## Todo List
-- [x] Configure training command.
-- [x] Create project documentation (walkthrough.md).
-- [x] Standardize BVH Exporter (3-channel, unwrap).
-- [x] Optimize Video Rendering (Auto-Framing).
-- [x] Batch Generate `06-1-PiPaJiYue` Previews.
-- [ ] Execute training/generation for `06-2-PiPaJiYue`.
-- [ ] Verify generated motion quality in Blender.
+## Module Completion
 
-## Key Files & Locations
-- **Codebase**: `d:\sinMDM\sinmdm`
-- **Documentation**: `d:\sinMDM\sinmdm\docs\`
-- **Training Output**: `d:\sinMDM\sinmdm\save\`
+| Module | Status | Key Files |
+|--------|--------|-----------|
+| 数据处理 | ✅ 完成 | `bvh_parser.py`, `preprocess.py`, `validator.py` |
+| 模型封装 | ✅ 完成 | `sinmdm_wrapper.py` |
+| 后处理 | ✅ 完成 | `smooth.py`, `constraints.py`, `pipeline.py` |
+| BVH 导出 | ✅ 完成 | `bvh_writer.py` |
+| 评估指标 | ✅ 完成 | `evaluate/metrics.py` |
+| Gradio GUI | ✅ 完成 | `app.py` (4 Tab) |
+| 功能测试 | ✅ 完成 | `tests/test_system.py` → 20/20 通过 |
+| 数据集文档 | ✅ 完成 | `docs/dataset_description.md` (自动生成) |
+| 模型训练 | ⚠️ 2/3 | 已训练 FeiTian + PiPaJiYue, 待补训第 3 段 |
 
-## Notes/Issues
-- BVH "torso monster" issue resolved via 3-channel standardization.
-- Euler "jumping frames" resolved via unwrap logic.
-- White-screen rendering issue resolved via auto-framing.
+## Dataset Summary
+- 6 categories: FeiTian, PuSa, LianHuaTongZi, LiShiWuJi, JiGuJiYue, PiPaJiYue
+- 16 BVH files, 9,481 frames, 316 seconds total
+- 22 joints, 30 FPS, 198-dimensional input
+
+## Trained Models
+- `save/01-1-FeiTian/` - 30K steps (QnA)
+- `save/06-1-PiPaJiYue/` - 30K steps (QnA)
+
+## Key Technical Features
+1. **Dynamic Dimension Support**: 198-dim Dunhuang data (vs original 263-dim HumanML3D)
+2. **Standardized BVH Export**: 3-channel JOINT, Euler Unwrap, 69 columns
+3. **Auto-Framing**: Dynamic camera bounds for video rendering
+4. **Post-processing Pipeline**: SavGol smoothing → Joint limits → Root stabilization → Ground contact
+5. **Quantitative Evaluation**: Angular velocity, joint violation rate, root jitter, distribution similarity
+
+## Todo
+- [ ] Train 3rd dance segment (requires GPU - AutoDL)
+- [ ] Blender import verification screenshots for thesis
+- [ ] Final thesis paper writing

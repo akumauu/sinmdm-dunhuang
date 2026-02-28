@@ -150,7 +150,8 @@ def explicit_plot_3d_motion(save_path, kinematic_tree, joints, title, dataset, f
     MINS_centered = data.min(axis=(0, 1))
     MAXS_centered = data.max(axis=(0, 1))
     center_centered = (MINS_centered + MAXS_centered) / 2
-    max_range_centered = (MAXS_centered - MINS_centered).max() / 2
+    # Add 1.5x padding to shrink the visual size of the character in the video
+    max_range_centered = ((MAXS_centered - MINS_centered).max() / 2) * 1.5
 
     def update(index):
         ax.clear()  # replace upper two lines, so code works with newer matplotlib versions

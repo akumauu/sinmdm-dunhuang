@@ -6,5 +6,6 @@ from . import models
 from . import postprocess
 from . import export
 from . import visualize
+from . import evaluate
 
 __version__ = "0.1.0"

@@ -2,12 +2,75 @@
 ICLR 2024 Spotlight
 
 > [!NOTE]
-> **Latest Update (2026-02-27)**: 
-> - Standardized BVH export (3-channel joints, Euler unwrap).
-> - Improved video rendering with Auto-Framing.
-> - Completed batch generation for `01-1-FeiTian` and `06-1-PiPaJiYue`.
+> **Latest Update (2026-02-28)**:
+> - 🖥️ **Gradio 桌面端 GUI** — 4 个功能 Tab（数据管理/模型训练/生成预览/后处理导出）
+> - ⚡ **后处理管线** — SavGol 平滑 + 关节约束 + 根节点稳定 + 地面穿透修正
+> - 📊 **量化评估体系** — 角速度/越界率/根节点抖动/分布相似性
+> - ✅ **功能测试** — 20 项全部通过 (100%)
+> - 📋 **数据集文档** — 6 类敦煌舞 · 16 个 BVH · 316 秒 · 全部 30FPS
+> - Standardized BVH export (3-channel joints, Euler unwrap)
+> - Improved video rendering with Auto-Framing
+> - Completed batch generation for `01-1-FeiTian` and `06-1-PiPaJiYue`
 
 <img alt="teaser" src="assets/dragon.png" width="80%"/>
+
+---
+
+## 🎭 敦煌舞蹈动作生成系统
+
+基于 SinMDM 的单序列扩散模型，实现从敦煌舞 BVH 数据的动作学习与生成。
+
+### 快速启动 GUI
+
+```bash
+# 安装依赖
+pip install gradio
+
+# 启动桌面端界面
+python app.py
+# 浏览器打开 http://localhost:7860
+```
+
+### 系统功能
+
+| 模块 | 功能 | 入口 |
+|------|------|------|
+| 📁 数据管理 | BVH 加载 / 骨架信息 / 3D 预览 | GUI Tab 1 |
+| 🧠 模型训练 | 超参数配置 / 训练命令生成 | GUI Tab 2 |
+| 🎬 生成预览 | 参数控制 / 样本生成 / 视频预览 | GUI Tab 3 |
+| 📤 后处理导出 | 平滑/约束 / 评估报告 / BVH 下载 | GUI Tab 4 |
+
+### 运行测试
+
+```bash
+python tests/test_system.py
+# 20/20 通过 (100%)
+```
+
+### 训练敦煌舞模型
+
+```bash
+python -m train.train_sinmdm \
+  --arch qna \
+  --dataset bvh_general \
+  --sin_path "敦煌舞三维动作数据集/长动作/01-FeiTian/01-1-FeiTian/01-1-FeiTian.bvh" \
+  --lr_method ExponentialLR \
+  --lr_gamma 0.99998 \
+  --num_steps 20000 \
+  --save_interval 2500 \
+  --use_scale_shift_norm \
+  --use_checkpoint \
+  --gen_during_training
+```
+
+### 项目文档
+
+- [`docs/system_technical_documentation.md`](docs/system_technical_documentation.md) — 系统技术文档
+- [`docs/dataset_description.md`](docs/dataset_description.md) — 数据集说明（自动生成）
+- [`docs/project_status.md`](docs/project_status.md) — 项目进度
+- [`docs/training_record.md`](docs/training_record.md) — 训练记录
+
+---
 
 Please visit our [project page](https://sinmdm.github.io/SinMDM-page/) for more details.
 
