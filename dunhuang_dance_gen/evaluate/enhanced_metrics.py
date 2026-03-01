@@ -45,6 +45,9 @@ class MotionQualityReport:
     # 与参考动作的相似度
     similarity: Dict[str, float] = field(default_factory=dict)
     
+    # 敦煌舞风格特征
+    style_metrics: Dict[str, float] = field(default_factory=dict)
+    
     def to_markdown(self) -> str:
         lines = [
             f"### {self.motion_name}",
@@ -58,6 +61,7 @@ class MotionQualityReport:
             ("足部运动指标", self.foot_metrics),
             ("多样性指标", self.diversity),
             ("与参考动作相似度", self.similarity),
+            ("敦煌舞风格特征", self.style_metrics),
         ]:
             if metrics:
                 lines.append(f"**{section_name}**")
@@ -561,5 +565,14 @@ class EnhancedMotionEvaluator:
         if additional_samples:
             all_samples = [rotations] + additional_samples
             report.diversity = self.compute_diversity(all_samples)
+        
+        # 6. 敦煌舞风格特征
+        try:
+            from .style_features import DunhuangStyleExtractor
+            style_extractor = DunhuangStyleExtractor(fps=self.fps)
+            style_profile = style_extractor.extract(rotations, motion_name)
+            report.style_metrics = style_profile.to_dict()
+        except Exception as e:
+            report.style_metrics = {'风格提取错误': str(e)}
         
         return report
