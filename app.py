@@ -841,6 +841,185 @@ MediaPipe 已安装，可以进行视频姿态估计。
                     return info
                 
                 pose_btn.click(extract_pose, inputs=[pose_video, pose_method, pose_fps], outputs=[pose_output])
+            
+            # ---- Tab 8: 风格迁移与约束 ----
+            with gr.Accordion("🎨 风格迁移与约束", open=True):
+                gr.Markdown("""### 敦煌舞风格迁移与可控约束
+                
+将参考动作的风格特征(如上肢舒展度、脊柱 S 曲线)迁移到生成动作上,
+或通过滑块直接控制目标风格参数。输出为**修改后的 BVH 文件**。
+""")
+                
+                with gr.Row():
+                    with gr.Column(scale=1):
+                        gr.Markdown("#### 输入选择")
+                        
+                        # BVH 文件选择
+                        style_source_file = gr.File(
+                            label="📂 源动作 BVH (要修改的)",
+                            file_types=[".bvh"]
+                        )
+                        style_ref_file = gr.File(
+                            label="📂 参考动作 BVH (风格来源)",
+                            file_types=[".bvh"]
+                        )
+                        
+                        gr.Markdown("#### 风格迁移强度")
+                        style_arm_slider = gr.Slider(
+                            minimum=0, maximum=1.0, value=0.5, step=0.1,
+                            label="🦾 上肢舒展度迁移"
+                        )
+                        style_spine_slider = gr.Slider(
+                            minimum=0, maximum=1.0, value=0.5, step=0.1,
+                            label="🐍 脊柱 S 曲线迁移"
+                        )
+                        style_rhythm_slider = gr.Slider(
+                            minimum=0, maximum=1.0, value=0.3, step=0.1,
+                            label="🎵 节奏停顿迁移"
+                        )
+                        style_amplitude_slider = gr.Slider(
+                            minimum=0, maximum=1.0, value=0.4, step=0.1,
+                            label="📊 动作幅度迁移"
+                        )
+                        style_global_slider = gr.Slider(
+                            minimum=0, maximum=2.0, value=1.0, step=0.1,
+                            label="🎛️ 全局强度系数"
+                        )
+                        
+                        style_transfer_btn = gr.Button("🔄 执行风格迁移", variant="primary")
+                    
+                    with gr.Column(scale=1):
+                        gr.Markdown("#### 直接风格约束 (无需参考动作)")
+                        
+                        constraint_source_file = gr.File(
+                            label="📂 待约束 BVH 文件",
+                            file_types=[".bvh"]
+                        )
+                        
+                        c_arm = gr.Slider(
+                            minimum=50, maximum=200, value=110, step=5,
+                            label="目标上肢舒展度 (°)"
+                        )
+                        c_spine = gr.Slider(
+                            minimum=50, maximum=400, value=250, step=10,
+                            label="目标脊柱弯曲度 (°)"
+                        )
+                        c_ratio = gr.Slider(
+                            minimum=0.5, maximum=3.0, value=1.3, step=0.1,
+                            label="目标上下身幅度比"
+                        )
+                        c_strength = gr.Slider(
+                            minimum=0, maximum=1.0, value=0.5, step=0.1,
+                            label="🎛️ 约束强度"
+                        )
+                        
+                        constraint_btn = gr.Button("⚡ 应用风格约束", variant="secondary")
+                
+                with gr.Row():
+                    style_result_output = gr.Markdown()
+                    style_download_file = gr.File(label="⬇️ 下载修改后的 BVH")
+                
+                def run_style_transfer(source_file, ref_file, arm_s, spine_s, rhythm_s, amp_s, global_s):
+                    if source_file is None or ref_file is None:
+                        return "❌ 请上传源动作和参考动作 BVH 文件", None
+                    
+                    try:
+                        from dunhuang_dance_gen.postprocess.style_transfer import (
+                            DunhuangStyleTransfer, StyleTransferConfig
+                        )
+                        from dunhuang_dance_gen.export.bvh_writer import BVHWriter
+                        
+                        src = load_bvh(source_file.name if hasattr(source_file, 'name') else str(source_file))
+                        ref = load_bvh(ref_file.name if hasattr(ref_file, 'name') else str(ref_file))
+                        
+                        cfg = StyleTransferConfig(
+                            arm_extension_strength=arm_s,
+                            spine_curvature_strength=spine_s,
+                            rhythm_strength=rhythm_s,
+                            amplitude_strength=amp_s,
+                            global_strength=global_s,
+                        )
+                        
+                        transfer = DunhuangStyleTransfer(fps=30.0)
+                        result = transfer.transfer(
+                            src.rotations, src.positions, ref.rotations, cfg
+                        )
+                        
+                        # 导出修改后的 BVH
+                        import tempfile, copy
+                        out_path = os.path.join(tempfile.gettempdir(), "style_transferred.bvh")
+                        writer = BVHWriter()
+                        out_data = copy.copy(src)
+                        out_data.rotations = result.rotations
+                        out_data.positions = result.positions
+                        writer.write_from_bvhdata(out_path, out_data)
+                        
+                        # 报告
+                        report = f"""### ✅ 风格迁移完成
+
+| 指标 | 源动作 | 参考动作 | 迁移结果 |
+|------|--------|---------|---------|
+| 上肢舒展度(°) | {result.source_style.left_arm_extension_mean:.1f} | {result.target_style.left_arm_extension_mean:.1f} | {result.result_style.left_arm_extension_mean:.1f} |
+| 脊柱弯曲度(°) | {result.source_style.spine_curvature_mean:.1f} | {result.target_style.spine_curvature_mean:.1f} | {result.result_style.spine_curvature_mean:.1f} |
+| 停顿占比(%) | {result.source_style.pause_ratio:.1f} | {result.target_style.pause_ratio:.1f} | {result.result_style.pause_ratio:.1f} |
+| 上下身幅度比 | {result.source_style.upper_lower_ratio:.2f} | {result.target_style.upper_lower_ratio:.2f} | {result.result_style.upper_lower_ratio:.2f} |
+| 整体对称性 | {result.source_style.overall_symmetry:.3f} | {result.target_style.overall_symmetry:.3f} | {result.result_style.overall_symmetry:.3f} |
+
+输出帧数: {result.rotations.shape[0]}, 关节数: {result.rotations.shape[1]}
+"""
+                        return report, out_path
+                    except Exception as e:
+                        return f"❌ 风格迁移失败: {str(e)}", None
+                
+                def run_constraint(source_file, arm_target, spine_target, ratio_target, strength):
+                    if source_file is None:
+                        return "❌ 请上传 BVH 文件", None
+                    
+                    try:
+                        from dunhuang_dance_gen.postprocess.style_transfer import StyleConstraintApplicator
+                        from dunhuang_dance_gen.export.bvh_writer import BVHWriter
+                        
+                        src = load_bvh(source_file.name if hasattr(source_file, 'name') else str(source_file))
+                        
+                        applicator = StyleConstraintApplicator(fps=30.0)
+                        mod_rot, mod_pos, change_report = applicator.apply(
+                            src.rotations, src.positions,
+                            target_arm_extension=arm_target,
+                            target_spine_curvature=spine_target,
+                            target_upper_lower_ratio=ratio_target,
+                            constraint_strength=strength,
+                        )
+                        
+                        import tempfile, copy
+                        out_path = os.path.join(tempfile.gettempdir(), "style_constrained.bvh")
+                        writer = BVHWriter()
+                        out_data = copy.copy(src)
+                        out_data.rotations = mod_rot
+                        out_data.positions = mod_pos
+                        writer.write_from_bvhdata(out_path, out_data)
+                        
+                        report = "### ✅ 风格约束已应用\n\n"
+                        for k, v in change_report.items():
+                            report += f"- **{k}**: {v}\n"
+                        report += f"\n输出帧数: {mod_rot.shape[0]}, 关节数: {mod_rot.shape[1]}"
+                        
+                        return report, out_path
+                    except Exception as e:
+                        return f"❌ 约束应用失败: {str(e)}", None
+                
+                style_transfer_btn.click(
+                    run_style_transfer,
+                    inputs=[style_source_file, style_ref_file, 
+                            style_arm_slider, style_spine_slider,
+                            style_rhythm_slider, style_amplitude_slider,
+                            style_global_slider],
+                    outputs=[style_result_output, style_download_file]
+                )
+                constraint_btn.click(
+                    run_constraint,
+                    inputs=[constraint_source_file, c_arm, c_spine, c_ratio, c_strength],
+                    outputs=[style_result_output, style_download_file]
+                )
         
         gr.Markdown("""
         ---
