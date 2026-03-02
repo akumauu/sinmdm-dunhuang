@@ -329,22 +329,25 @@ class StyleConstraintApplicator:
         current = self.extractor.extract(rot, "current")
         report = {}
         
+        # 记录修改前的值
+        before_arm = current.left_arm_extension_mean
+        before_spine = current.spine_curvature_mean
+        before_ratio = current.upper_lower_ratio
+        before_pause = current.pause_ratio
+        
         # 约束1: 上肢舒展度
         if target_arm_extension is not None:
-            before = current.left_arm_extension_mean
-            if before > 1e-3:
-                ratio = target_arm_extension / before
+            if before_arm > 1e-3:
+                ratio = target_arm_extension / before_arm
                 scale = 1.0 + (ratio - 1.0) * constraint_strength
                 for j in [7, 8, 9, 11, 12, 13]:
                     if j < J:
                         rot[:, j, :] *= scale
-                report['上肢舒展度'] = f"{before:.1f}° → {target_arm_extension:.1f}° (强度{constraint_strength})"
         
         # 约束2: 脊柱弯曲度
         if target_spine_curvature is not None:
-            before = current.spine_curvature_mean
-            if before > 1e-3:
-                ratio = target_spine_curvature / before
+            if before_spine > 1e-3:
+                ratio = target_spine_curvature / before_spine
                 scale = 1.0 + (ratio - 1.0) * constraint_strength
                 spine_joints = [j for j in SPINE_CHAIN if j < J]
                 if len(spine_joints) >= 2:
@@ -353,32 +356,26 @@ class StyleConstraintApplicator:
                         jj = spine_joints[k]
                         diff = rot[:, jj, :] - base
                         rot[:, jj, :] = base + diff * scale
-                report['脊柱弯曲度'] = f"{before:.1f}° → {target_spine_curvature:.1f}° (强度{constraint_strength})"
         
         # 约束3: 上下身幅度比
         if target_upper_lower_ratio is not None:
-            before = current.upper_lower_ratio
-            if before > 0.01 and abs(before) < 100:
-                # 调整上身幅度使比例趋向目标
-                ratio_adjust = target_upper_lower_ratio / before
+            if before_ratio > 0.01 and abs(before_ratio) < 100:
+                ratio_adjust = target_upper_lower_ratio / before_ratio
                 scale = 1.0 + (ratio_adjust - 1.0) * constraint_strength
                 upper_joints = [j for j in UPPER_BODY if j < J]
                 for j in upper_joints:
                     mean_r = np.mean(rot[:, j, :], axis=0, keepdims=True)
                     rot[:, j, :] = mean_r + (rot[:, j, :] - mean_r) * scale
-                report['上下身比例'] = f"{before:.2f} → {target_upper_lower_ratio:.2f} (强度{constraint_strength})"
         
         # 约束4: 停顿节奏
         if target_pause_ratio is not None:
-            before = current.pause_ratio
             rot_flat = rot.reshape(T, -1)
             vel = np.sqrt(np.sum(np.diff(rot_flat, axis=0) ** 2, axis=1))
             
-            current_pause_count = int(before / 100 * (T - 1))
+            current_pause_count = int(before_pause / 100 * (T - 1))
             target_pause_count = int(target_pause_ratio / 100 * (T - 1))
             
             if target_pause_count > current_pause_count:
-                # 需要增加停顿: 在最低速度帧进一步减速
                 extra = int((target_pause_count - current_pause_count) * constraint_strength)
                 if extra > 0:
                     sorted_idx = np.argsort(vel)
@@ -387,8 +384,25 @@ class StyleConstraintApplicator:
                         if 0 < idx < T - 1:
                             alpha = 0.5 * constraint_strength
                             rot[idx] = (1 - alpha) * rot[idx] + alpha * rot[idx - 1]
-            
-            report['停顿比例'] = f"{before:.1f}% → {target_pause_ratio:.1f}% (强度{constraint_strength})"
+        
+        # 重新提取特征, 报告实际达成值 (而非目标值)
+        after = self.extractor.extract(rot, "after")
+        
+        if target_arm_extension is not None:
+            actual = after.left_arm_extension_mean
+            report['上肢舒展度'] = f"{before_arm:.1f}° → {actual:.1f}° (目标{target_arm_extension:.0f}°, 强度{constraint_strength})"
+        
+        if target_spine_curvature is not None:
+            actual = after.spine_curvature_mean
+            report['脊柱弯曲度'] = f"{before_spine:.1f}° → {actual:.1f}° (目标{target_spine_curvature:.0f}°, 强度{constraint_strength})"
+        
+        if target_upper_lower_ratio is not None:
+            actual = after.upper_lower_ratio
+            report['上下身比例'] = f"{before_ratio:.2f} → {actual:.2f} (目标{target_upper_lower_ratio:.2f}, 强度{constraint_strength})"
+        
+        if target_pause_ratio is not None:
+            actual = after.pause_ratio
+            report['停顿比例'] = f"{before_pause:.1f}% → {actual:.1f}% (目标{target_pause_ratio:.1f}%, 强度{constraint_strength})"
         
         return rot, pos, report
 

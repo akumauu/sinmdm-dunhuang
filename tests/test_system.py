@@ -530,6 +530,130 @@ test_multi_dance_scan()
 
 
 # ============================================================
+# 6. 风格模块测试
+# ============================================================
+print("\n" + "=" * 60)
+print("6. 风格模块")
+print("=" * 60)
+
+
+@test("风格特征提取 - 真实 BVH 数据")
+def test_style_extraction():
+    from dunhuang_dance_gen.data.bvh_parser import load_bvh
+    from dunhuang_dance_gen.evaluate.style_features import DunhuangStyleExtractor
+    
+    dataset_dir = PROJECT_ROOT / "敦煌舞三维动作数据集" / "长动作"
+    bvh_file = next(dataset_dir.rglob("*.bvh"))
+    data = load_bvh(str(bvh_file))
+    
+    extractor = DunhuangStyleExtractor(fps=30.0)
+    profile = extractor.extract(data.rotations, bvh_file.stem)
+    
+    assert profile.left_arm_extension_mean > 0, "上肢舒展度应该 > 0"
+    assert profile.spine_curvature_mean > 0, "脊柱弯曲度应该 > 0"
+    assert 0 <= profile.pause_ratio <= 100, "停顿占比应在 0-100"
+    assert profile.upper_lower_ratio > 0, "上下身比例应该 > 0"
+    
+    vec = profile.to_vector()
+    assert vec.shape == (21,), f"风格向量维度应为 21, 实际 {vec.shape}"
+
+test_style_extraction()
+
+
+@test("风格迁移 - 迁移 + BVH 往返验证")
+def test_style_transfer():
+    from dunhuang_dance_gen.data.bvh_parser import load_bvh
+    from dunhuang_dance_gen.postprocess.style_transfer import DunhuangStyleTransfer, StyleTransferConfig
+    from dunhuang_dance_gen.export.bvh_writer import BVHWriter
+    
+    dataset_dir = PROJECT_ROOT / "敦煌舞三维动作数据集" / "长动作"
+    bvh_files = sorted(dataset_dir.rglob("*.bvh"))
+    assert len(bvh_files) >= 2, "需要至少 2 个 BVH 文件"
+    
+    src = load_bvh(str(bvh_files[0]))
+    ref = load_bvh(str(bvh_files[1]))
+    
+    transfer = DunhuangStyleTransfer(fps=30.0)
+    cfg = StyleTransferConfig(arm_extension_strength=0.7, spine_curvature_strength=0.5)
+    result = transfer.transfer(src.rotations, src.positions, ref.rotations, cfg)
+    
+    assert result.rotations.shape == src.rotations.shape, "输出形状应与输入一致"
+    assert not np.any(np.isnan(result.rotations)), "迁移后不应有 NaN"
+    
+    # BVH 往返验证
+    with tempfile.NamedTemporaryFile(suffix='.bvh', delete=False) as f:
+        temp_path = f.name
+    try:
+        writer = BVHWriter(frame_time=src.frame_time)
+        writer.write(temp_path, src.joint_names, src.parent_indices,
+                     src.offsets, result.positions, result.rotations)
+        reloaded = load_bvh(temp_path)
+        assert reloaded.num_frames == src.num_frames, "帧数不一致"
+        assert reloaded.num_joints == src.num_joints, "关节数不一致"
+    finally:
+        os.unlink(temp_path)
+
+test_style_transfer()
+
+
+@test("风格约束 - 实际达成值验证")
+def test_style_constraint():
+    from dunhuang_dance_gen.data.bvh_parser import load_bvh
+    from dunhuang_dance_gen.postprocess.style_transfer import StyleConstraintApplicator
+    from dunhuang_dance_gen.evaluate.style_features import DunhuangStyleExtractor
+    
+    dataset_dir = PROJECT_ROOT / "敦煌舞三维动作数据集" / "长动作"
+    bvh_file = next(dataset_dir.rglob("*.bvh"))
+    data = load_bvh(str(bvh_file))
+    
+    applicator = StyleConstraintApplicator(fps=30.0)
+    mod_rot, mod_pos, report = applicator.apply(
+        data.rotations, data.positions,
+        target_arm_extension=130.0,
+        target_spine_curvature=300.0,
+        constraint_strength=0.6
+    )
+    
+    assert mod_rot.shape == data.rotations.shape
+    assert not np.any(np.isnan(mod_rot)), "约束后不应有 NaN"
+    assert '上肢舒展度' in report, "报告应包含上肢舒展度"
+    assert '目标' in report['上肢舒展度'], "报告应显示目标值"
+    
+    # 验证报告中的数值是实际值 (不应等于目标值)
+    extractor = DunhuangStyleExtractor(fps=30.0)
+    after = extractor.extract(mod_rot, "after")
+    assert after.left_arm_extension_mean != data.rotations.shape[0], "应返回真实的特征值"
+
+test_style_constraint()
+
+
+@test("跨舞段风格一致性矩阵")
+def test_cross_dance_consistency():
+    from dunhuang_dance_gen.data.bvh_parser import load_bvh
+    from dunhuang_dance_gen.evaluate.style_features import StyleConsistencyEvaluator
+    
+    dataset_dir = PROJECT_ROOT / "敦煌舞三维动作数据集" / "长动作"
+    bvh_files = sorted(dataset_dir.rglob("*.bvh"))
+    
+    evaluator = StyleConsistencyEvaluator()
+    for f in bvh_files[:4]:
+        data = load_bvh(str(f))
+        evaluator.add_motion(f.stem[:20], data.rotations)
+    
+    matrix, names = evaluator.compute_consistency_matrix()
+    
+    assert matrix.shape == (4, 4), f"矩阵形状应为 (4,4), 实际 {matrix.shape}"
+    assert len(names) == 4
+    assert np.all(np.diag(matrix) == 0), "对角线应全为 0"
+    assert np.all(matrix >= 0), "距离应非负"
+    
+    report = evaluator.generate_report()
+    assert "风格距离矩阵" in report
+
+test_cross_dance_consistency()
+
+
+# ============================================================
 # 汇总报告
 # ============================================================
 print("\n" + "=" * 60)

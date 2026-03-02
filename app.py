@@ -998,10 +998,15 @@ MediaPipe 已安装，可以进行视频姿态估计。
                         out_data.positions = mod_pos
                         writer.write_from_bvhdata(out_path, out_data)
                         
+                        # 往返验证
+                        reloaded = load_bvh(out_path)
+                        
                         report = "### ✅ 风格约束已应用\n\n"
+                        report += "| 维度 | 变化 |\n|------|------|\n"
                         for k, v in change_report.items():
-                            report += f"- **{k}**: {v}\n"
+                            report += f"| {k} | {v} |\n"
                         report += f"\n输出帧数: {mod_rot.shape[0]}, 关节数: {mod_rot.shape[1]}"
+                        report += f"\n\n✅ BVH 往返验证通过 (重加载 {reloaded.num_frames} 帧, {reloaded.num_joints} 关节)"
                         
                         return report, out_path
                     except Exception as e:
