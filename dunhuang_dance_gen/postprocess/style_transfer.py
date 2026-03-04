@@ -20,6 +20,20 @@ from dunhuang_dance_gen.evaluate.style_features import (
 )
 
 
+def _apply_symmetry_scale(rot: np.ndarray, pairs: List[Tuple[int, int]], diff_scale: float) -> np.ndarray:
+    """Scale left-right differences while preserving the average pose."""
+    for left_idx, right_idx in pairs:
+        if left_idx >= rot.shape[1] or right_idx >= rot.shape[1]:
+            continue
+        left = rot[:, left_idx, :].copy()
+        right = rot[:, right_idx, :].copy()
+        center = 0.5 * (left + right)
+        diff = 0.5 * (left - right)
+        rot[:, left_idx, :] = center + diff * diff_scale
+        rot[:, right_idx, :] = center - diff * diff_scale
+    return rot
+
+
 @dataclass
 class StyleTransferConfig:
     """风格迁移参数配置"""
@@ -120,8 +134,13 @@ class DunhuangStyleTransfer:
         if cfg.amplitude_strength > 0:
             s = cfg.amplitude_strength * g
             rot = self._transfer_amplitude(rot, src_profile, ref_profile, s)
+
+        # 5. 左右对称性迁移
+        if cfg.symmetry_strength > 0:
+            s = cfg.symmetry_strength * g
+            rot = self._transfer_symmetry(rot, src_profile, ref_profile, s)
         
-        # 5. 平滑过渡
+        # 6. 平滑过渡
         if cfg.smooth_transition:
             rot = self._smooth_result(rot, source_rotations, cfg.transition_frames)
         
@@ -257,6 +276,24 @@ class DunhuangStyleTransfer:
                 rot[:, j, :] = mean_rot + (rot[:, j, :] - mean_rot) * scale
         
         return rot
+
+    def _transfer_symmetry(self, rot, src_profile, ref_profile, strength):
+        """
+        迁移左右对称性:
+        根据参考动作的对称性，缩放左右肢体的差异项。
+        """
+        arm_src_asym = max(1e-3, 1.0 - src_profile.arm_symmetry)
+        arm_ref_asym = max(0.0, 1.0 - ref_profile.arm_symmetry)
+        arm_ratio = arm_ref_asym / arm_src_asym
+        arm_scale = 1.0 + (arm_ratio - 1.0) * strength
+        rot = _apply_symmetry_scale(rot, [(7, 11), (8, 12), (9, 13)], arm_scale)
+
+        leg_src_asym = max(1e-3, 1.0 - src_profile.leg_symmetry)
+        leg_ref_asym = max(0.0, 1.0 - ref_profile.leg_symmetry)
+        leg_ratio = leg_ref_asym / leg_src_asym
+        leg_scale = 1.0 + (leg_ratio - 1.0) * strength
+        rot = _apply_symmetry_scale(rot, [(14, 18), (15, 19), (16, 20)], leg_scale)
+        return rot
     
     def _smooth_result(self, rot, original_rot, transition_frames):
         """对迁移结果进行开头/结尾的平滑过渡"""
@@ -306,6 +343,7 @@ class StyleConstraintApplicator:
               target_spine_curvature: Optional[float] = None,
               target_upper_lower_ratio: Optional[float] = None,
               target_pause_ratio: Optional[float] = None,
+              target_symmetry: Optional[float] = None,
               constraint_strength: float = 0.5) -> Tuple[np.ndarray, np.ndarray, Dict]:
         """
         应用风格约束, 输出修改后的旋转和位置数据
@@ -317,6 +355,7 @@ class StyleConstraintApplicator:
             target_spine_curvature: 目标脊柱弯曲度 (°)
             target_upper_lower_ratio: 目标上下身幅度比
             target_pause_ratio: 目标停顿帧占比 (%)
+            target_symmetry: 目标整体对称性 (0~1)
             constraint_strength: 约束强度 (0~1)
             
         Returns:
@@ -334,6 +373,7 @@ class StyleConstraintApplicator:
         before_spine = current.spine_curvature_mean
         before_ratio = current.upper_lower_ratio
         before_pause = current.pause_ratio
+        before_symmetry = current.overall_symmetry
         
         # 约束1: 上肢舒展度
         if target_arm_extension is not None:
@@ -384,6 +424,16 @@ class StyleConstraintApplicator:
                         if 0 < idx < T - 1:
                             alpha = 0.5 * constraint_strength
                             rot[idx] = (1 - alpha) * rot[idx] + alpha * rot[idx - 1]
+
+        # 约束5: 左右对称性
+        if target_symmetry is not None:
+            target_symmetry = float(np.clip(target_symmetry, 0.0, 1.0))
+            current_asym = max(1e-3, 1.0 - before_symmetry)
+            target_asym = max(0.0, 1.0 - target_symmetry)
+            ratio_adjust = target_asym / current_asym
+            diff_scale = 1.0 + (ratio_adjust - 1.0) * constraint_strength
+            rot = _apply_symmetry_scale(rot, [(7, 11), (8, 12), (9, 13)], diff_scale)
+            rot = _apply_symmetry_scale(rot, [(14, 18), (15, 19), (16, 20)], diff_scale)
         
         # 重新提取特征, 报告实际达成值 (而非目标值)
         after = self.extractor.extract(rot, "after")
@@ -403,6 +453,10 @@ class StyleConstraintApplicator:
         if target_pause_ratio is not None:
             actual = after.pause_ratio
             report['停顿比例'] = f"{before_pause:.1f}% → {actual:.1f}% (目标{target_pause_ratio:.1f}%, 强度{constraint_strength})"
+
+        if target_symmetry is not None:
+            actual = after.overall_symmetry
+            report['整体对称性'] = f"{before_symmetry:.3f} → {actual:.3f} (目标{target_symmetry:.2f}, 强度{constraint_strength})"
         
         return rot, pos, report
 

@@ -11,6 +11,7 @@ Functional Test Suite for Dunhuang Dance Motion Generation System
 
 import sys
 import os
+import json
 import tempfile
 import numpy as np
 from pathlib import Path
@@ -148,6 +149,37 @@ def test_validator_compatibility():
     assert result.is_valid, f"兼容性检查失败: {result.errors}"
 
 test_validator_compatibility()
+
+
+@test("数据集构建 - 切片与 train/val 清单")
+def test_dataset_builder():
+    from dunhuang_dance_gen.data import build_dataset_from_bvh_files
+
+    dataset_dir = PROJECT_ROOT / "敦煌舞三维动作数据集" / "长动作"
+    bvh_files = sorted(str(path) for path in dataset_dir.rglob("*.bvh"))[:2]
+    assert len(bvh_files) == 2, "需要至少 2 个 BVH 文件用于测试"
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        result = build_dataset_from_bvh_files(
+            bvh_paths=bvh_files,
+            output_root=tmpdir,
+            clip_seconds=3.0,
+            overlap_seconds=1.0,
+            min_clip_seconds=1.5,
+            val_ratio=0.25,
+            seed=123,
+        )
+        assert result.total_sources == 2
+        assert result.total_clips > 0, "应至少导出 1 个 clip"
+        assert Path(result.manifest_path).exists(), "manifest 未生成"
+        assert Path(result.train_list_path).exists(), "train_list 未生成"
+        assert Path(result.summary_path).exists(), "summary 未生成"
+
+        manifest = json.loads(Path(result.manifest_path).read_text(encoding="utf-8"))
+        assert manifest["total_clips"] == result.total_clips
+        assert len(manifest["records"]) == result.total_clips
+
+test_dataset_builder()
 
 
 # ============================================================
@@ -313,6 +345,56 @@ def test_bvh_writer():
         os.unlink(temp_path)
 
 test_bvh_writer()
+
+
+@test("视频姿态导出 - 22关节序列转 BVH")
+def test_video_pose_bvh_export():
+    from dunhuang_dance_gen.data import save_pose_sequence_as_bvh
+    from dunhuang_dance_gen.data.bvh_parser import load_bvh
+
+    frames = 24
+    base = np.zeros((frames, 22, 3), dtype=np.float32)
+
+    # 构造一条简单但有效的 22 关节骨架序列
+    base[:, 0] = np.array([0.0, 90.0, 0.0], dtype=np.float32)
+    base[:, 1] = np.array([0.0, 105.0, 0.0], dtype=np.float32)
+    base[:, 2] = np.array([0.0, 120.0, 0.0], dtype=np.float32)
+    base[:, 3] = np.array([0.0, 135.0, 0.0], dtype=np.float32)
+    base[:, 4] = np.array([0.0, 150.0, 0.0], dtype=np.float32)
+    base[:, 5] = np.array([0.0, 165.0, 5.0], dtype=np.float32)
+    base[:, 6] = np.array([-8.0, 135.0, 0.0], dtype=np.float32)
+    base[:, 7] = np.array([-18.0, 132.0, 0.0], dtype=np.float32)
+    base[:, 8] = np.array([-28.0, 126.0, 2.0], dtype=np.float32)
+    base[:, 9] = np.array([-38.0, 120.0, 4.0], dtype=np.float32)
+    base[:, 10] = np.array([8.0, 135.0, 0.0], dtype=np.float32)
+    base[:, 11] = np.array([18.0, 132.0, 0.0], dtype=np.float32)
+    base[:, 12] = np.array([28.0, 126.0, -2.0], dtype=np.float32)
+    base[:, 13] = np.array([38.0, 120.0, -4.0], dtype=np.float32)
+    base[:, 14] = np.array([-8.0, 78.0, 0.0], dtype=np.float32)
+    base[:, 15] = np.array([-8.0, 42.0, 2.0], dtype=np.float32)
+    base[:, 16] = np.array([-8.0, 10.0, 6.0], dtype=np.float32)
+    base[:, 17] = np.array([-8.0, 0.0, 12.0], dtype=np.float32)
+    base[:, 18] = np.array([8.0, 78.0, 0.0], dtype=np.float32)
+    base[:, 19] = np.array([8.0, 42.0, -2.0], dtype=np.float32)
+    base[:, 20] = np.array([8.0, 10.0, -6.0], dtype=np.float32)
+    base[:, 21] = np.array([8.0, 0.0, -12.0], dtype=np.float32)
+
+    base[:, 0, 0] = np.linspace(0.0, 12.0, frames, dtype=np.float32)
+    base[:, 9, 1] += np.linspace(0.0, 8.0, frames, dtype=np.float32)
+    base[:, 13, 1] += np.linspace(0.0, 6.0, frames, dtype=np.float32)
+
+    with tempfile.NamedTemporaryFile(suffix='.bvh', delete=False) as f:
+        temp_path = f.name
+
+    try:
+        save_pose_sequence_as_bvh(base, temp_path, fps=24.0)
+        reloaded = load_bvh(temp_path)
+        assert reloaded.num_frames == frames, f"帧数不匹配: {reloaded.num_frames}"
+        assert reloaded.num_joints == 22, f"关节数不匹配: {reloaded.num_joints}"
+    finally:
+        os.unlink(temp_path)
+
+test_video_pose_bvh_export()
 
 
 @test("BVH 写入器 - 真实数据往返")
@@ -502,6 +584,17 @@ def test_full_pipeline():
 test_full_pipeline()
 
 
+@test("模型注册 - 发现已训练的 bvh_general 检查点")
+def test_model_registry_discovery():
+    from dunhuang_dance_gen.models import list_saved_models
+
+    records = list_saved_models(str(PROJECT_ROOT / "save"), latest_only=True, dataset_filter="bvh_general")
+    assert len(records) >= 3, f"发现 {len(records)} 个 bvh_general 模型（期望至少 3 个）"
+    assert all(Path(record.model_path).exists() for record in records), "存在缺失的模型文件"
+
+test_model_registry_discovery()
+
+
 @test("多舞段扫描 - 加载所有类别")
 def test_multi_dance_scan():
     from dunhuang_dance_gen.data.bvh_parser import load_bvh
@@ -611,6 +704,8 @@ def test_style_constraint():
         data.rotations, data.positions,
         target_arm_extension=130.0,
         target_spine_curvature=300.0,
+        target_pause_ratio=15.0,
+        target_symmetry=0.7,
         constraint_strength=0.6
     )
     
@@ -618,6 +713,8 @@ def test_style_constraint():
     assert not np.any(np.isnan(mod_rot)), "约束后不应有 NaN"
     assert '上肢舒展度' in report, "报告应包含上肢舒展度"
     assert '目标' in report['上肢舒展度'], "报告应显示目标值"
+    assert '停顿比例' in report, "报告应包含停顿比例"
+    assert '整体对称性' in report, "报告应包含整体对称性"
     
     # 验证报告中的数值是实际值 (不应等于目标值)
     extractor = DunhuangStyleExtractor(fps=30.0)
@@ -625,6 +722,37 @@ def test_style_constraint():
     assert after.left_arm_extension_mean != data.rotations.shape[0], "应返回真实的特征值"
 
 test_style_constraint()
+
+
+@test("风格迁移 - 对称性迁移与风格混合")
+def test_style_symmetry_and_blend():
+    from dunhuang_dance_gen.data.bvh_parser import load_bvh
+    from dunhuang_dance_gen.postprocess.style_transfer import (
+        DunhuangStyleTransfer,
+        StyleTransferConfig,
+        style_blend,
+    )
+
+    dataset_dir = PROJECT_ROOT / "敦煌舞三维动作数据集" / "长动作"
+    bvh_files = sorted(dataset_dir.rglob("*.bvh"))
+    src = load_bvh(str(bvh_files[0]))
+    ref = load_bvh(str(bvh_files[1]))
+
+    transfer = DunhuangStyleTransfer(fps=30.0)
+    result = transfer.transfer(
+        src.rotations,
+        src.positions,
+        ref.rotations,
+        StyleTransferConfig(symmetry_strength=0.8, smooth_transition=False),
+    )
+    assert result.rotations.shape == src.rotations.shape
+    assert 0.0 <= result.result_style.overall_symmetry <= 1.0
+
+    mixed = style_blend(src.rotations, ref.rotations, weight=0.4)
+    assert mixed.shape[0] == min(src.rotations.shape[0], ref.rotations.shape[0])
+    assert mixed.shape[1:] == src.rotations.shape[1:]
+
+test_style_symmetry_and_blend()
 
 
 @test("跨舞段风格一致性矩阵")
@@ -651,6 +779,49 @@ def test_cross_dance_consistency():
     assert "风格距离矩阵" in report
 
 test_cross_dance_consistency()
+
+
+@test("教学分析 - 分段/关键帧/慢放导出")
+def test_teaching_analyzer():
+    from dunhuang_dance_gen.data.bvh_parser import load_bvh
+    from dunhuang_dance_gen.teaching import TeachingAnalyzer
+
+    dataset_dir = PROJECT_ROOT / "敦煌舞三维动作数据集" / "长动作"
+    bvh_file = next(dataset_dir.rglob("*.bvh"))
+    data = load_bvh(str(bvh_file))
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        analyzer = TeachingAnalyzer(fps=data.fps)
+        result = analyzer.analyze_and_export(
+            data=data,
+            output_dir=tmpdir,
+            motion_name="teaching_test",
+            target_segment_seconds=2.5,
+            min_segment_seconds=1.0,
+            slow_motion_factor=2.0,
+        )
+        assert len(result.segments) >= 1
+        assert len(result.keyframes) >= 2
+        assert Path(result.slow_bvh_path).exists()
+        assert Path(result.report_json_path).exists()
+        assert Path(result.report_md_path).exists()
+
+test_teaching_analyzer()
+
+
+@test("外部联动 - Blender 路径解析")
+def test_blender_resolver():
+    from dunhuang_dance_gen.integrations import resolve_blender_executable
+
+    with tempfile.NamedTemporaryFile(delete=False) as handle:
+        fake_blender = handle.name
+
+    try:
+        assert resolve_blender_executable(fake_blender) == fake_blender
+    finally:
+        os.unlink(fake_blender)
+
+test_blender_resolver()
 
 
 # ============================================================
@@ -685,3 +856,6 @@ print("|------|--------|------|")
 for i, (status, name, _) in enumerate(test_results, 1):
     print(f"| T{i:02d} | {name} | {status} |")
 print(f"| | **总计 {total} 项 · 通过率 {passed/total*100:.0f}%** | |")
+
+if __name__ == "__main__":
+    sys.exit(1 if failed > 0 else 0)

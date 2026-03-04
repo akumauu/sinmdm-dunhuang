@@ -12,7 +12,7 @@ from typing import Optional, Dict, Any, List
 import numpy as np
 
 # SinMDM 路径配置
-SINMDM_ROOT = Path(__file__).parent.parent.parent / "sinmdm"
+SINMDM_ROOT = Path(__file__).resolve().parents[2]
 
 
 class SinMDMWrapper:
@@ -40,12 +40,13 @@ class SinMDMWrapper:
         
         # 默认训练参数
         self.default_train_args = {
-            'arch': 'unet',
+            'arch': 'qna',
             'dataset': 'bvh_general',
             'lr_method': 'ExponentialLR',
             'lr_gamma': 0.99998,
             'use_scale_shift_norm': True,
             'use_checkpoint': True,
+            'save_interval': 2500,
         }
         
         # 默认生成参数
@@ -53,6 +54,8 @@ class SinMDMWrapper:
             'num_samples': 1,
             'motion_length': 10.0,  # 秒
             'seed': None,
+            'noise_scale': 1.0,
+            'skip_timesteps': 0,
         }
     
     def train(
@@ -89,6 +92,9 @@ class SinMDMWrapper:
             '--sin_path', str(bvh_path),
             '--lr_method', self.default_train_args['lr_method'],
             '--lr_gamma', str(self.default_train_args['lr_gamma']),
+            '--num_steps', str(int(epochs)),
+            '--save_interval', str(int(kwargs.get('save_interval', self.default_train_args['save_interval']))),
+            '--overwrite',
         ]
         
         if kwargs.get('use_scale_shift_norm', True):
@@ -161,17 +167,22 @@ class SinMDMWrapper:
             output_dir = model_path.parent / 'generated'
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
-        
+
         # 构建生成命令
         cmd = [
             sys.executable, '-m', 'sample.generate',
             '--model_path', str(model_path),
             '--num_samples', str(num_samples),
             '--motion_length', str(motion_length),
+            '--output_dir', str(output_dir),
         ]
-        
+
         if seed is not None:
             cmd.extend(['--seed', str(seed)])
+        if 'noise_scale' in kwargs:
+            cmd.extend(['--noise_scale', str(kwargs['noise_scale'])])
+        if 'skip_timesteps' in kwargs:
+            cmd.extend(['--skip_timesteps', str(kwargs['skip_timesteps'])])
         
         print(f"[SinMDM] Generating {num_samples} sample(s)...")
         print(f"[SinMDM] Motion length: {motion_length}s")
@@ -198,17 +209,14 @@ class SinMDMWrapper:
             'output_dir': str(output_dir)
         }
         
-        # 查找生成的文件（SinMDM 默认输出位置）
-        save_dir = model_path.parent if model_path.is_file() else model_path
-        
-        for bvh_file in save_dir.glob("sample*.bvh"):
+        for bvh_file in sorted(output_dir.glob("sample*.bvh")):
             results['bvh_files'].append(str(bvh_file))
         
-        npy_files = list(save_dir.glob("results*.npy"))
+        npy_files = sorted(output_dir.glob("results*.npy"))
         if npy_files:
             results['npy_file'] = str(npy_files[0])
         
-        mp4_files = list(save_dir.glob("*.mp4"))
+        mp4_files = sorted(output_dir.glob("*.mp4"))
         if mp4_files:
             results['video_file'] = str(mp4_files[0])
         
@@ -237,15 +245,18 @@ class SinMDMWrapper:
         用于用户手动执行或调试
         """
         cmd_parts = [
-            'python', '-m', 'train.train_sinmdm',
-            '--arch', kwargs.get('arch', 'unet'),
+            sys.executable, '-m', 'train.train_sinmdm',
+            '--arch', kwargs.get('arch', self.default_train_args['arch']),
             '--dataset', 'bvh_general',
             '--save_dir', f'"{save_dir}"',
             '--sin_path', f'"{bvh_path}"',
             '--lr_method', 'ExponentialLR',
             '--lr_gamma', '0.99998',
+            '--num_steps', str(int(kwargs.get('num_steps', 50000))),
+            '--save_interval', str(int(kwargs.get('save_interval', self.default_train_args['save_interval']))),
             '--use_scale_shift_norm',
             '--use_checkpoint',
+            '--overwrite',
         ]
         
         return ' '.join(cmd_parts)
@@ -255,18 +266,27 @@ class SinMDMWrapper:
         model_path: str,
         num_samples: int = 1,
         motion_length: float = 10.0,
-        seed: Optional[int] = None
+        seed: Optional[int] = None,
+        output_dir: Optional[str] = None,
+        noise_scale: float = 1.0,
+        skip_timesteps: int = 0,
     ) -> str:
         """
         获取生成命令（不执行）
         """
         cmd_parts = [
-            'python', '-m', 'sample.generate',
+            sys.executable, '-m', 'sample.generate',
             '--model_path', f'"{model_path}"',
             '--num_samples', str(num_samples),
             '--motion_length', str(motion_length),
         ]
-        
+        if output_dir:
+            cmd_parts.extend(['--output_dir', f'"{output_dir}"'])
+        if noise_scale != 1.0:
+            cmd_parts.extend(['--noise_scale', str(noise_scale)])
+        if skip_timesteps > 0:
+            cmd_parts.extend(['--skip_timesteps', str(skip_timesteps)])
+
         if seed is not None:
             cmd_parts.extend(['--seed', str(seed)])
         

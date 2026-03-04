@@ -3,6 +3,7 @@ import argparse
 import os
 import json
 import sys
+import re
 
 
 def parse_and_load_from_model(parser):
@@ -26,7 +27,7 @@ def parse_and_load_from_model(parser):
 
     for a in args_to_overwrite:
         if a in model_args.keys():
-            setattr(args, a, model_args[a])
+            setattr(args, a, _normalize_cross_platform_path(model_args[a]))
 
         elif 'cond_mode' in model_args: # backward compatability
             unconstrained = (model_args['cond_mode'] == 'no_cond')
@@ -36,6 +37,24 @@ def parse_and_load_from_model(parser):
             print('Warning: was not able to load [{}], using default value [{}] instead.'.format(a, args.__dict__[a]))
 
     return args
+
+
+def _normalize_cross_platform_path(value):
+    if not isinstance(value, str):
+        return value
+    if os.path.exists(value):
+        return value
+
+    win_match = re.match(r'^([a-zA-Z]):[\\/](.*)$', value)
+    if not win_match:
+        return value
+
+    drive_letter = win_match.group(1).lower()
+    relative_path = win_match.group(2).replace('\\', '/')
+    candidate = f'/mnt/{drive_letter}/{relative_path}'
+    if os.path.exists(candidate):
+        return candidate
+    return value
 
 
 def get_args_per_group_name(parser, args, group_name):
@@ -48,9 +67,13 @@ def get_args_per_group_name(parser, args, group_name):
 def get_model_path_from_args():
     try:
         dummy_parser = ArgumentParser()
-        dummy_parser.add_argument('model_path')
+        dummy_parser.add_argument('model_path', nargs='?')
+        dummy_parser.add_argument('--model_path', dest='model_path_kw')
         dummy_args, _ = dummy_parser.parse_known_args()
-        return dummy_args.model_path
+        model_path = dummy_args.model_path_kw or dummy_args.model_path
+        if model_path:
+            return model_path
+        raise ValueError
     except:
         raise ValueError('model_path argument must be specified.')
 
@@ -204,6 +227,12 @@ def add_generate_options(parser):
     group.add_argument("--motion_length", default=None, type=float,
                        help="The length of the sampled motion [in seconds]. "
                             "Maximum is 9.8 for HumanML3D (text-to-motion), and 2.0 for HumanAct12 (action-to-motion)")
+    group.add_argument("--noise_scale", default=1.0, type=float,
+                       help="Scale factor for the initial sampling noise. "
+                            "Values > 1.0 usually increase diversity, values < 1.0 keep the result closer to the training motion.")
+    group.add_argument("--skip_timesteps", default=0, type=int,
+                       help="Number of diffusion steps to skip during sampling. "
+                            "0 keeps the original SinMDM behavior.")
 
 def add_edit_options(parser):
     group = parser.add_argument_group('edit')

@@ -66,11 +66,11 @@ class FusedQnA(nn.Module):
         :return: The query-key dot product for each query head [B, N_Queries, Heads, H, W]
         """
         # WK = [D_in, h, D]
-        Wk = self.Wk.view([self.in_features, self.heads, self.hidden_features // self.heads])
+        Wk = self.Wk.reshape([self.in_features, self.heads, self.hidden_features // self.heads])
         qWk = torch.einsum('Bhd,Dhd->BDh', q, Wk)
         qWkx = torch.einsum('BDHW,BDh->BhHW', x, qWk)
         if self.use_bias:
-            Wk_b = self.Wk_bias.view(self.heads, self.hidden_features // self.heads)
+            Wk_b = self.Wk_bias.reshape(self.heads, self.hidden_features // self.heads)
             qWk_b = torch.einsum('hd,Bhd->Bh', Wk_b, q)[..., None, None]
             qWkx = qWkx + qWk_b
         return qWkx
@@ -80,8 +80,8 @@ class FusedQnA(nn.Module):
         B, _, H, W = v.shape
         cost_exp = torch.exp(cost)  # [B, heads, H, W]
         h_dim = self.hidden_features // self.heads
-        v_cost_exp = cost_exp[:, :, None, ...] * v.view(B, self.heads, h_dim, H, W)  # [B, , heads, head_dim, H, W]
-        v_cost_exp = v_cost_exp.view(B, self.hidden_features, H, W)
+        v_cost_exp = cost_exp[:, :, None, ...] * v.reshape(B, self.heads, h_dim, H, W)  # [B, , heads, head_dim, H, W]
+        v_cost_exp = v_cost_exp.reshape(B, self.hidden_features, H, W)
         if rpe is not None:
             rpe_exp = torch.exp(rpe)  # [k, 1, h,w]
             summation_kernel = rpe_exp
@@ -93,7 +93,7 @@ class FusedQnA(nn.Module):
                                   groups=self.hidden_features)
 
         h_out, w_out = sum_v_cost_exp.shape[2], sum_v_cost_exp.shape[3]
-        sum_v_cost_exp = sum_v_cost_exp.view(B, self.heads, h_dim, h_out, w_out)
+        sum_v_cost_exp = sum_v_cost_exp.reshape(B, self.heads, h_dim, h_out, w_out)
         I = cost_exp.reshape([B, -1, H, W])
         summation_kernel = rpe_exp if rpe is not None else torch.ones(self.heads, 1, self.kernel_size,
                                                                       self.kernel_size).to(
@@ -103,7 +103,7 @@ class FusedQnA(nn.Module):
                                 stride=self.stride,
                                 padding=self.padding,
                                 groups=self.heads,
-                                ).view(B, self.heads, 1, h_out, w_out)
+                                ).reshape(B, self.heads, 1, h_out, w_out)
         out = sum_v_cost_exp / sum_cost_exp
         out = out.reshape([B, self.hidden_features, h_out, w_out])
         return out
@@ -115,7 +115,7 @@ class FusedQnA(nn.Module):
     ):
         B, Din, H, W = x.shape
         # Prepare query
-        q = torch.broadcast_to(self.query, [x.shape[0], self.hidden_features]).view(B, self.heads,
+        q = torch.broadcast_to(self.query, [x.shape[0], self.hidden_features]).reshape(B, self.heads,
                                                                                     self.hidden_features // self.heads)
         q = q / (np.sqrt(q.shape[-1]) + 1e-6)
         if self.normalize_q:
@@ -196,11 +196,11 @@ class FusedQnA1d(nn.Module):
         :return: The query-key dot product for each query head [B, N_Queries, Heads, H, W]
         """
         # WK = [D_in, h, D]
-        Wk = self.Wk.view([self.in_features, self.heads, self.hidden_features // self.heads])
+        Wk = self.Wk.reshape([self.in_features, self.heads, self.hidden_features // self.heads])
         qWk = torch.einsum('Bhd,Dhd->BDh', q, Wk)
         qWkx = torch.einsum('BDHW,BDh->BhHW', x, qWk)
         if self.use_bias:
-            Wk_b = self.Wk_bias.view(self.heads, self.hidden_features // self.heads)
+            Wk_b = self.Wk_bias.reshape(self.heads, self.hidden_features // self.heads)
             qWk_b = torch.einsum('hd,Bhd->Bh', Wk_b, q)[..., None, None]
             qWkx = qWkx + qWk_b
         return qWkx
@@ -210,8 +210,8 @@ class FusedQnA1d(nn.Module):
         B, _, H, W = v.shape
         cost_exp = torch.exp(cost)  # [B, heads, H, W]
         h_dim = self.hidden_features // self.heads
-        v_cost_exp = cost_exp[:, :, None, ...] * v.view(B, self.heads, h_dim, H, W)  # [B, , heads, head_dim, H, W]
-        v_cost_exp = v_cost_exp.view(B, self.hidden_features, H, W)
+        v_cost_exp = cost_exp[:, :, None, ...] * v.reshape(B, self.heads, h_dim, H, W)  # [B, , heads, head_dim, H, W]
+        v_cost_exp = v_cost_exp.reshape(B, self.hidden_features, H, W)
         if rpe is not None:
             rpe_exp = torch.exp(rpe)  # [k, 1, h,w]
             summation_kernel = rpe_exp
@@ -223,7 +223,7 @@ class FusedQnA1d(nn.Module):
                                   groups=self.hidden_features)
 
         h_out, w_out = sum_v_cost_exp.shape[2], sum_v_cost_exp.shape[3]
-        sum_v_cost_exp = sum_v_cost_exp.view(B, self.heads, h_dim, h_out, w_out)
+        sum_v_cost_exp = sum_v_cost_exp.reshape(B, self.heads, h_dim, h_out, w_out)
         I = cost_exp.reshape([B, -1, H, W])
         summation_kernel = rpe_exp if rpe is not None else torch.ones(self.heads, 1, self.axial_dim,
                                                                       self.kernel_size).to(
@@ -233,7 +233,7 @@ class FusedQnA1d(nn.Module):
                                 stride=(1, self.stride),
                                 padding=(0, self.padding),
                                 groups=self.heads,
-                                ).view(B, self.heads, 1, h_out, w_out)
+                                ).reshape(B, self.heads, 1, h_out, w_out)
         out = sum_v_cost_exp / sum_cost_exp
         out = out.reshape([B, self.hidden_features, h_out, w_out])
         return out
@@ -248,10 +248,10 @@ class FusedQnA1d(nn.Module):
         B, Din, H, W = x.shape
         if self.timesteps_embed is not None and timesteps is not None:
             q = self.timesteps_embed(timesteps)
-            q = q.view(B, self.heads, self.hidden_features // self.heads)
+            q = q.reshape(B, self.heads, self.hidden_features // self.heads)
         else:
             # Prepare query
-            q = torch.broadcast_to(self.query, [x.shape[0], self.hidden_features]).view(B, self.heads,
+            q = torch.broadcast_to(self.query, [x.shape[0], self.hidden_features]).reshape(B, self.heads,
                                                                                         self.hidden_features // self.heads)
         if self.normalize_q:
             q = q / (torch.linalg.norm(q, dim=-1, keepdim=True) + 1e-6)
@@ -332,11 +332,11 @@ class FusedUpQnA1d(nn.Module):
         :return: The query-key dot product for each query head [B, N_Queries, Heads, H, W]
         """
         # WK = [D_in, h, D]
-        Wk = self.Wk.view([self.in_features, self.heads, self.hidden_features // self.heads])
+        Wk = self.Wk.reshape([self.in_features, self.heads, self.hidden_features // self.heads])
         qWk = torch.einsum('Bqhd,Dhd->BDqh', q, Wk)
         qWkx = torch.einsum('BDHW,BDqh->BqhHW', x, qWk)
         if self.use_bias:
-            Wk_b = self.Wk_bias.view(self.heads, self.hidden_features // self.heads)
+            Wk_b = self.Wk_bias.reshape(self.heads, self.hidden_features // self.heads)
             qWk_b = torch.einsum('Bqhd,hd->Bqh', q, Wk_b)[..., None, None]
             qWkx = qWkx + qWk_b
         return qWkx
@@ -346,15 +346,15 @@ class FusedUpQnA1d(nn.Module):
         B, _, H, W = v.shape
         cost_exp = torch.exp(cost)  # [B, q, heads, H, W]
         h_dim = self.hidden_features // self.heads
-        v_cost_exp = cost_exp[:, :, :, None, ...] * v.view(B, 1, self.heads, h_dim, H,
+        v_cost_exp = cost_exp[:, :, :, None, ...] * v.reshape(B, 1, self.heads, h_dim, H,
                                                            W)  # [B, q, heads, head_dim, H, W]
-        v_cost_exp = v_cost_exp.view(B, self.scale_factor * self.hidden_features, H, W)
+        v_cost_exp = v_cost_exp.reshape(B, self.scale_factor * self.hidden_features, H, W)
         if rpe is not None:
             rpe_exp = torch.exp(rpe)  # [k, 1, h,w]
             summation_kernel = rpe_exp
             summation_kernel = torch.repeat_interleave(
                 summation_kernel, repeats=h_dim, dim=1
-            ).view(self.scale_factor * self.hidden_features, 1, self.axial_dim, self.kernel_size)
+            ).reshape(self.scale_factor * self.hidden_features, 1, self.axial_dim, self.kernel_size)
         else:
             summation_kernel = torch.ones(self.scale_factor * self.hidden_features, 1, self.axial_dim, self.kernel_size).to(
                 v_cost_exp)
@@ -367,10 +367,10 @@ class FusedUpQnA1d(nn.Module):
                                   )
 
         h_out, w_out = sum_v_cost_exp.shape[2], sum_v_cost_exp.shape[3]
-        sum_v_cost_exp = sum_v_cost_exp.view(B, self.scale_factor, self.heads, h_dim, h_out, w_out)
+        sum_v_cost_exp = sum_v_cost_exp.reshape(B, self.scale_factor, self.heads, h_dim, h_out, w_out)
         I = cost_exp.reshape([B, -1, H, W])
         summation_kernel = (
-            rpe_exp.view(self.scale_factor * self.heads, 1, self.axial_dim, self.kernel_size)
+            rpe_exp.reshape(self.scale_factor * self.heads, 1, self.axial_dim, self.kernel_size)
             if rpe is not None else
             torch.ones(self.heads, 1, self.axial_dim, self.kernel_size).to(v_cost_exp)
         )
@@ -379,9 +379,9 @@ class FusedUpQnA1d(nn.Module):
                                 stride=(1, self.stride),
                                 padding=(0, self.padding),
                                 groups=self.scale_factor * self.heads,
-                                ).view(B, self.scale_factor, self.heads, 1, h_out, w_out)
+                                ).reshape(B, self.scale_factor, self.heads, 1, h_out, w_out)
         out = sum_v_cost_exp / sum_cost_exp
-        out = out.view(B, self.scale_factor, self.hidden_features, h_out, w_out)
+        out = out.reshape(B, self.scale_factor, self.hidden_features, h_out, w_out)
         out = out.permute(0, 2, 3, 1, 4)
         out = out.reshape([B, self.hidden_features, h_out, self.scale_factor * w_out])
         return out
@@ -396,7 +396,7 @@ class FusedUpQnA1d(nn.Module):
         B, Din, H, W = x.shape
         if self.timesteps_embed is not None and timesteps is not None:
             q = self.timesteps_embed(timesteps)
-            q = q.view(
+            q = q.reshape(
                 B, self.scale_factor, self.heads, self.hidden_features // self.heads
             )
         else:
@@ -404,7 +404,7 @@ class FusedUpQnA1d(nn.Module):
             # assert False, "Don't unset timesteps unless explicitly done for testing"
             q = torch.broadcast_to(
                 self.query, [x.shape[0], self.scale_factor * self.hidden_features]
-            ).view(
+            ).reshape(
                 B, self.scale_factor, self.heads, self.hidden_features // self.heads
             )
         if self.normalize_q:

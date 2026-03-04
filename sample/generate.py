@@ -6,6 +6,7 @@ numpy array. This can be used to produce samples for FID evaluation.
 from utils.fixseed import fixseed
 import os
 import copy
+from pathlib import Path
 import numpy as np
 import torch
 from utils.parser_util import generate_args
@@ -135,17 +136,23 @@ def main(args=None):
     print(f'### Sampling')
 
     sample_fn = diffusion.p_sample_loop
+    init_noise = None
+    if getattr(args, 'noise_scale', 1.0) != 1.0:
+        init_noise = torch.randn(
+            (args.batch_size, model.njoints, model.nfeats, n_frames),
+            device=dist_util.dev(),
+        ) * float(args.noise_scale)
 
     sample = sample_fn(
         model,
         (args.batch_size, model.njoints, model.nfeats, n_frames),
         clip_denoised=False,
         model_kwargs=model_kwargs,
-        skip_timesteps=0,  # 0 is the default value - i.e. don't skip any step
+        skip_timesteps=max(0, int(getattr(args, 'skip_timesteps', 0))),
         init_image=None,
         progress=True,
         dump_steps=None,
-        noise=None,
+        noise=init_noise,
         const_noise=False,
     )
 
@@ -235,6 +242,7 @@ def main(args=None):
 
     sample_print_template, row_print_template, all_print_template, \
     sample_file_template, row_file_template, all_file_template = construct_template_variables(args.unconstrained)
+    all_sample_save_path = None
 
     for sample_i in range(args.num_samples):
         rep_files = []
@@ -242,23 +250,32 @@ def main(args=None):
         length = all_lengths[0 *args.batch_size + sample_i]
         motion = all_motions[0 *args.batch_size + sample_i].transpose(2, 0, 1)[:length]  # n_joints x 3 x n_frames  ==>  n_frames x n_joints x 3
         save_file = sample_file_template.format(sample_i, 0 )
-        print(sample_print_template.format(caption, sample_i, 0 , save_file))
         animation_save_path = os.path.join(out_path, save_file)
         motion_to_plot = copy.deepcopy(motion)
         if 'Breakdancing_Dragon' in args.sin_path:
             motion_to_plot = motion_to_plot[:, :, [0,2,1]] # replace y and z axes
-        plot_3d_motion(animation_save_path, skeleton, motion_to_plot, dataset=args.dataset, title=caption, fps=fps)
+        try:
+            rendered_path = plot_3d_motion(animation_save_path, skeleton, motion_to_plot, dataset=args.dataset, title=caption, fps=fps)
+        except Exception as exc:
+            rendered_path = None
+            print(f'[Warn] Preview generation skipped for sample {sample_i:02d}: {exc}')
         # Credit for visualization: https://github.com/EricGuo5513/text-to-motion
 
-        rep_files.append(animation_save_path)
-
-        sample_files, all_sample_save_path = save_multiple_samples(args, out_path,
-                                               row_print_template, all_print_template, row_file_template, all_file_template,
-                                               caption, num_samples_in_out_file, rep_files, sample_files, sample_i)
+        if rendered_path:
+            rendered_name = os.path.basename(rendered_path)
+            print(sample_print_template.format(caption, sample_i, 0 , rendered_name))
+            rep_files.append(rendered_path)
+            sample_files, all_sample_save_path = save_multiple_samples(args, out_path,
+                                                   row_print_template, all_print_template, row_file_template, all_file_template,
+                                                   caption, num_samples_in_out_file, rep_files, sample_files, sample_i)
+        else:
+            all_sample_save_path = os.path.join(out_path, f'sample{sample_i:02d}.bvh')
     abs_path = os.path.abspath(out_path)
     print(f'[Done] Results are at [{abs_path}]')
 
-    assert all_sample_save_path is not None
+    if all_sample_save_path is None:
+        fallback_bvh = sorted([str(p) for p in Path(out_path).glob('sample*.bvh')])
+        all_sample_save_path = fallback_bvh[0] if fallback_bvh else npy_path
     return all_sample_save_path
 
 
@@ -266,23 +283,35 @@ def save_multiple_samples(args, out_path, row_print_template, all_print_template
                           caption, num_samples_in_out_file, rep_files, sample_files, sample_i):
     all_rep_save_file = row_file_template.format(sample_i)
     all_rep_save_path = os.path.join(out_path, all_rep_save_file)
-    ffmpeg_rep_files = [f' -i {f} ' for f in rep_files]
-    hstack_args = ''
-    ffmpeg_rep_cmd = f'ffmpeg -y -loglevel warning ' + ''.join(ffmpeg_rep_files) + f'{hstack_args} {all_rep_save_path}'
-    os.system(ffmpeg_rep_cmd)
-    print(row_print_template.format(caption, sample_i, all_rep_save_file))
-    sample_files.append(all_rep_save_path)
+    ffmpeg_available = shutil.which('ffmpeg') is not None
+    can_stack_row = ffmpeg_available and all(f.lower().endswith('.mp4') for f in rep_files)
+
+    if can_stack_row:
+        ffmpeg_rep_files = [f' -i {f} ' for f in rep_files]
+        hstack_args = ''
+        ffmpeg_rep_cmd = f'ffmpeg -y -loglevel warning ' + ''.join(ffmpeg_rep_files) + f'{hstack_args} {all_rep_save_path}'
+        os.system(ffmpeg_rep_cmd)
+        row_result_path = all_rep_save_path
+    else:
+        row_result_path = rep_files[0]
+
+    print(row_print_template.format(caption, sample_i, os.path.basename(row_result_path)))
+    sample_files.append(row_result_path)
     all_sample_save_path = None
     if (sample_i + 1) % num_samples_in_out_file == 0 or sample_i + 1 == args.num_samples:
         # save several samples together
         all_sample_save_file = all_file_template.format(sample_i - len(sample_files) + 1, sample_i)
         all_sample_save_path = os.path.join(out_path, all_sample_save_file)
-        print(all_print_template.format(sample_i - len(sample_files) + 1, sample_i, all_sample_save_file))
-        ffmpeg_rep_files = [f' -i {f} ' for f in sample_files]
-        vstack_args = f' -filter_complex vstack=inputs={len(sample_files)}' if len(sample_files) > 1 else ''
-        ffmpeg_rep_cmd = f'ffmpeg -y -loglevel warning ' + ''.join(
-            ffmpeg_rep_files) + f'{vstack_args} {all_sample_save_path}'
-        os.system(ffmpeg_rep_cmd)
+        can_stack_batch = ffmpeg_available and all(f.lower().endswith('.mp4') for f in sample_files)
+        if can_stack_batch:
+            ffmpeg_rep_files = [f' -i {f} ' for f in sample_files]
+            vstack_args = f' -filter_complex vstack=inputs={len(sample_files)}' if len(sample_files) > 1 else ''
+            ffmpeg_rep_cmd = f'ffmpeg -y -loglevel warning ' + ''.join(
+                ffmpeg_rep_files) + f'{vstack_args} {all_sample_save_path}'
+            os.system(ffmpeg_rep_cmd)
+        else:
+            all_sample_save_path = sample_files[0]
+        print(all_print_template.format(sample_i - len(sample_files) + 1, sample_i, os.path.basename(all_sample_save_path)))
         sample_files = []
     return sample_files, all_sample_save_path
 

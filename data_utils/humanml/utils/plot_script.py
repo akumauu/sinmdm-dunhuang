@@ -1,4 +1,5 @@
 import math
+import os
 import numpy as np
 import matplotlib
 import matplotlib.pyplot as plt
@@ -39,7 +40,18 @@ def plot_3d_motion(save_path, kinematic_tree, joints, title, dataset, figsize=(3
     if vis_mode == 'unfold':  # FIXME - hard coded intervals
         frame_colors =  ['purple'] *40 + ['orange'] *40
         frame_colors = ['orange'] *80 + frame_colors*1024
-    explicit_plot_3d_motion(save_path, kinematic_tree, joints, title, dataset, figsize=figsize, fps=fps, radius=radius, vis_mode=vis_mode, frame_colors=frame_colors)
+    return explicit_plot_3d_motion(
+        save_path,
+        kinematic_tree,
+        joints,
+        title,
+        dataset,
+        figsize=figsize,
+        fps=fps,
+        radius=radius,
+        vis_mode=vis_mode,
+        frame_colors=frame_colors,
+    )
 
 
 def explicit_plot_3d_motion(save_path, kinematic_tree, joints, title, dataset, figsize=(3, 3), fps=120, radius=3, vis_mode="default", frame_colors=[]):
@@ -189,5 +201,13 @@ def explicit_plot_3d_motion(save_path, kinematic_tree, joints, title, dataset, f
 
     ani = FuncAnimation(fig, update, frames=frame_number, interval=1000 // fps, repeat=False)
 
-    ani.save(save_path, fps=fps)
+    writer = "ffmpeg"
+    actual_save_path = save_path
+    if save_path.lower().endswith(".gif") or not FFMpegFileWriter.isAvailable():
+        writer = "pillow"
+        if save_path.lower().endswith(".mp4"):
+            actual_save_path = os.path.splitext(save_path)[0] + ".gif"
+
+    ani.save(actual_save_path, fps=fps, writer=writer)
     plt.close()
+    return actual_save_path

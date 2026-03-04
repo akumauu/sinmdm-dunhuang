@@ -3,6 +3,7 @@ import torch
 from data_utils.mixamo.motion import MotionData
 from Motion.transforms import quat2repr6d
 from Motion import BVH
+from utils import dist_util
 
 def load_sin_motion(args):
     motion_data = None
@@ -45,6 +46,6 @@ def load_sin_motion(args):
         motion = motion.permute(1, 2, 0)  # n_frames x n_joints x n_feats  ==> n_joints x n_feats x n_frames
         motion = motion.to(torch.float32)  # align with network dtype
 
-    motion = motion.to(args.device)
+    motion = motion.to(dist_util.dev())
     return motion, motion_data
 
