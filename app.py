@@ -698,6 +698,100 @@ def apply_postprocess(
 # ============================================================
 # 主界面构建
 # ============================================================
+
+def scan_export_final_bvh():
+    export_dir = r'D:\sinMDM\export_final\export'
+    files = []
+    if os.path.exists(export_dir):
+        for root, _, filenames in os.walk(export_dir):
+            for f in filenames:
+                if f.endswith('.bvh'):
+                    files.append(os.path.join(root, f))
+    return sorted(files)
+
+def scan_export_final_mp4():
+    scan_dirs = [
+        r'D:\sinMDM\export_final\export',
+        r'D:\sinMDM\export_final\video',
+    ]
+    files = []
+    for export_dir in scan_dirs:
+        if os.path.exists(export_dir):
+            for root, _, filenames in os.walk(export_dir):
+                for f in filenames:
+                    if f.endswith('.mp4'):
+                        files.append(os.path.join(root, f))
+    return sorted(set(files))
+
+
+def check_system_environment():
+    """检测并汇报系统环境状态"""
+    import platform
+    checks = []
+    checks.append("## 🔧 系统环境检测报告\n")
+    checks.append(f"| 项目 | 状态 |")
+    checks.append(f"|------|------|")
+
+    # OS
+    checks.append(f"| **操作系统** | {platform.system()} {platform.release()} ({platform.architecture()[0]}) |")
+    checks.append(f"| **Python** | {sys.version.split()[0]} (`{sys.executable}`) |")
+
+    # CUDA
+    try:
+        import torch
+        cuda_ok = torch.cuda.is_available()
+        gpu_name = torch.cuda.get_device_name(0) if cuda_ok else 'N/A'
+        checks.append(f"| **PyTorch** | {torch.__version__} |")
+        checks.append(f"| **CUDA 可用** | {'✅ ' + gpu_name if cuda_ok else '❌ 不可用 (CPU模式)'} |")
+    except ImportError:
+        checks.append(f"| **PyTorch** | ❌ 未安装 |")
+
+    # Gradio
+    checks.append(f"| **Gradio** | {gr.__version__} |")
+
+    # WSL
+    try:
+        r = subprocess.run(["wsl", "--status"], capture_output=True, text=True, timeout=8)
+        wsl_ok = r.returncode == 0
+        checks.append(f"| **WSL 子系统** | {'✅ 可用' if wsl_ok else '⚠️ 异常'} |")
+    except Exception:
+        checks.append(f"| **WSL 子系统** | ⚠️ 未检测到 |")
+
+    # Shell
+    try:
+        r = subprocess.run(["powershell", "-Command", "echo ok"], capture_output=True, text=True, timeout=5)
+        checks.append(f"| **PowerShell** | {'✅ 可用' if r.returncode == 0 else '❌'} |")
+    except Exception:
+        checks.append(f"| **PowerShell** | ⚠️ 未检测到 |")
+
+    # Blender
+    try:
+        r = subprocess.run(["blender", "--version"], capture_output=True, text=True, timeout=5)
+        if r.returncode == 0:
+            ver = r.stdout.strip().split('\n')[0]
+            checks.append(f"| **Blender** | ✅ {ver} |")
+        else:
+            checks.append(f"| **Blender** | ⚠️ 未在 PATH |")
+    except Exception:
+        checks.append(f"| **Blender** | ⚠️ 未在 PATH |")
+
+    # 数据目录
+    export_dir = r'D:\sinMDM\export_final\export'
+    video_dir = r'D:\sinMDM\export_final\video'
+    n_bvh = len(scan_export_final_bvh())
+    n_mp4 = len(scan_export_final_mp4())
+    checks.append(f"| **BVH 资产库** | {'✅' if n_bvh > 0 else '❌'} {n_bvh} 个文件 |")
+    checks.append(f"| **MP4 视频库** | {'✅' if n_mp4 > 0 else '❌'} {n_mp4} 个文件 |")
+    checks.append(f"| **数据集目录** | {'✅ 存在' if os.path.exists(DATASET_DIR) else '❌ 缺失'} |")
+    checks.append(f"| **模型存档** | {'✅ 存在' if os.path.exists(SAVE_DIR) else '❌ 缺失'} |")
+
+    # 3D可视化
+    checks.append(f"| **3D 可视化 (Plotly)** | {'✅ 可用' if HAS_PLOTLY else '❌ 缺失'} |")
+
+    checks.append("\n---\n")
+    checks.append(f"*检测时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*")
+    return "\n".join(checks)
+
 def create_app():
     """创建 Gradio 应用"""
     
@@ -714,6 +808,9 @@ def create_app():
         css="""
         .main-title { text-align: center; margin-bottom: 10px; }
         .tab-content { min-height: 500px; }
+        .gradio-container { max-width: 1400px !important; }
+        .env-panel { background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%); border-radius: 12px; padding: 16px; color: #e0e0e0; }
+        .advanced-demo-card { border: 1px solid rgba(100,149,237,0.3); border-radius: 10px; padding: 12px; background: rgba(100,149,237,0.05); }
         """
     ) as app:
         
@@ -721,786 +818,253 @@ def create_app():
         # 🎭 敦煌舞蹈动作生成系统
         ### 基于 SinMDM 的单序列扩散模型 · 西北民族大学本科毕业设计
         """, elem_classes="main-title")
-        
+
+        # ==========================================
+        # 环境检测面板 (折叠)
+        # ==========================================
+        with gr.Accordion("🔧 系统环境检测 · 点击展开", open=False):
+            env_check_btn = gr.Button("🔍 执行环境自检", variant="secondary")
+            env_report = gr.Markdown("点击上方按钮进行环境检测...")
+            env_check_btn.click(check_system_environment, outputs=[env_report])
+
         with gr.Tabs():
-            # ---- Tab 1: 数据管理 ----
-            with gr.TabItem("📁 数据管理", id="data"):
-                with gr.Row():
-                    with gr.Column(scale=1):
-                        bvh_dropdown = gr.Dropdown(
-                            choices=bvh_files,
-                            label="选择 BVH 文件",
-                            info="从数据集或生成结果中选择",
-                            allow_custom_value=True,
-                        )
-                        bvh_upload = gr.File(
-                            label="或上传 BVH 文件",
-                            file_types=[".bvh"],
-                        )
-                        load_btn = gr.Button("📊 加载并分析", variant="primary")
-                        status_text = gr.Textbox(label="状态", interactive=False)
+            # ==========================================
+            # 模块一：【🎯 动作生成与展示】
+            # ==========================================
+            with gr.TabItem("🎯 动作生成与展示", id="generation_demo"):
+                gr.Markdown("### 🎭 零样本/单样本动作生成及高质量渲染成果展示")
+                
+                with gr.Accordion("1. 成果库展示 ( export_final/export ) 👇", open=True):
+                    gr.Markdown("> 浏览已导出的高质量 MP4 演示与 BVH 骨架序列。")
+                    with gr.Row():
+                        with gr.Column(scale=1):
+                            demo_bvh_dropdown = gr.Dropdown(choices=scan_export_final_bvh(), label="选择 BVH 动作序列", allow_custom_value=True)
+                            demo_bvh_btn = gr.Button("🔍 使用 Blender 打开此 BVH", variant="secondary")
+                        with gr.Column(scale=1):
+                            demo_bvh_msg = gr.Markdown("准备就绪")
                     
-                    with gr.Column(scale=2):
-                        info_output = gr.Markdown(label="文件信息")
-                        preview_img = gr.Image(label="骨架预览", height=400)
-                
-                def on_upload(file):
-                    if file:
-                        return file.name
-                    return ""
-                
-                bvh_upload.change(on_upload, inputs=[bvh_upload], outputs=[bvh_dropdown])
-                load_btn.click(
-                    load_bvh_info,
-                    inputs=[bvh_dropdown],
-                    outputs=[info_output, status_text, preview_img]
-                )
-            
-            # ---- Tab 2: 模型训练 ----
-            with gr.TabItem("🧠 模型训练", id="train"):
-                with gr.Row():
-                    with gr.Column(scale=1):
-                        train_bvh = gr.Dropdown(
-                            choices=get_available_bvh_for_training(),
-                            label="训练数据 (BVH)",
-                            info="选择用于训练的敦煌舞 BVH 文件",
-                            allow_custom_value=True,
-                        )
-                        train_arch = gr.Radio(
-                            choices=["qna", "unet"],
-                            value="qna",
-                            label="网络架构",
-                            info="QnA: 局部注意力(推荐) | UNet: 标准卷积"
-                        )
-                        train_steps = gr.Slider(
-                            minimum=5000, maximum=50000, value=20000, step=1000,
-                            label="训练步数",
-                            info="推荐 10000-20000 步"
-                        )
-                        train_save_interval = gr.Slider(
-                            minimum=1000, maximum=10000, value=2500, step=500,
-                            label="保存间隔"
-                        )
-                        train_lr_gamma = gr.Number(
-                            value=0.99998,
-                            label="学习率衰减 (gamma)",
-                            precision=5
-                        )
-                        train_gen = gr.Checkbox(
-                            value=True,
-                            label="训练中生成预览"
-                        )
-                        train_btn = gr.Button("🚀 启动训练", variant="primary")
+                    with gr.Row():
+                        with gr.Column(scale=1):
+                            demo_mp4_dropdown = gr.Dropdown(choices=scan_export_final_mp4(), label="选择 MP4 渲染视频", allow_custom_value=True)
+                            demo_mp4_btn = gr.Button("▶️ 使用默认播放器打开", variant="primary")
+                        with gr.Column(scale=1):
+                            demo_mp4_msg = gr.Markdown("准备就绪")
                     
-                    with gr.Column(scale=2):
-                        train_output = gr.Markdown(label="训练信息")
-                        train_cmd = gr.Textbox(
-                            label="训练命令 (本次实际执行)",
-                            interactive=True,
-                            lines=3,
-                        )
-                
-                train_btn.click(
-                    start_training,
-                    inputs=[train_bvh, train_steps, train_save_interval, 
-                            train_arch, train_lr_gamma, train_gen],
-                    outputs=[train_output, train_cmd]
-                )
-            
-            # ---- Tab 3: 生成预览 ----
-            with gr.TabItem("🎬 生成预览", id="generate"):
-                with gr.Row():
-                    with gr.Column(scale=1):
-                        scan_models_btn = gr.Button("🩺 扫描现有模型", variant="secondary")
-                        gen_model = gr.Dropdown(
-                            choices=get_available_models(),
-                            label="选择模型",
-                            info="默认展示主线 bvh_general 的最新检查点",
-                            allow_custom_value=True,
-                        )
-                        gen_samples = gr.Slider(
-                            minimum=1, maximum=10, value=3, step=1,
-                            label="生成样本数"
-                        )
-                        gen_length = gr.Slider(
-                            minimum=2.0, maximum=30.0, value=10.0, step=0.5,
-                            label="生成时长 (秒)"
-                        )
-                        gen_seed = gr.Number(
-                            value=-1,
-                            label="随机种子 (-1=随机)",
-                            precision=0
-                        )
-                        gen_diversity = gr.Slider(
-                            minimum=0.1, maximum=2.0, value=1.0, step=0.1,
-                            label="多样性系数",
-                            info=">1.0 增大生成多样性, <1.0 更接近原始动作"
-                        )
-                        gen_btn = gr.Button("🎭 生成动作", variant="primary")
+                    def load_demo_bvh(path):
+                        if not path or not os.path.exists(path): return "❌ 文件不存在"
+                        try:
+                            from dunhuang_dance_gen.integrations import launch_blender_with_file
+                            ok, msg = launch_blender_with_file(path)
+                            return f"### ✅ {msg}" if ok else f"### ❌ {msg}"
+                        except Exception as e:
+                            return f"### ❌ 启动 Blender 失败: {e}"
                     
-                    with gr.Column(scale=2):
-                        model_scan_report = gr.Markdown(label="模型体检")
-                        gen_output = gr.Markdown(label="生成信息")
-                        gen_cmd = gr.Textbox(
-                            label="生成命令 (本次实际执行)",
-                            interactive=True,
-                            lines=2,
-                        )
-                        gen_video = gr.Video(label="动画预览", height=400)
-                        gen_preview_file = gr.File(label="预览文件 (GIF/MP4)")
-                
-                scan_models_btn.click(
-                    scan_saved_models_ui,
-                    outputs=[model_scan_report, gen_model]
-                )
-                gen_btn.click(
-                    generate_motion,
-                    inputs=[gen_model, gen_samples, gen_length, gen_seed, gen_diversity],
-                    outputs=[gen_output, gen_cmd, gen_video, gen_preview_file]
-                )
-            
-            # ---- Tab 4: 导出与后处理 ----
-            with gr.TabItem("📤 后处理与导出", id="export"):
-                with gr.Row():
-                    with gr.Column(scale=1):
-                        export_bvh = gr.Dropdown(
-                            choices=bvh_files,
-                            label="选择待处理的 BVH 文件",
-                            allow_custom_value=True,
-                        )
+                    def load_demo_mp4(path):
+                        if not path or not os.path.exists(path): return "❌ 文件不存在"
+                        try:
+                            import os
+                            os.startfile(path)
+                            return f"### ✅ 已尝试外部播放: {os.path.basename(path)}"
+                        except Exception as e:
+                            return f"### ❌ 打开视频失败: {e}"
                         
-                        gr.Markdown("### ⚙️ 后处理参数")
-                        pp_smooth_method = gr.Radio(
-                            choices=["savgol", "gaussian", "none"],
-                            value="savgol",
-                            label="平滑方法"
-                        )
-                        pp_smooth_window = gr.Slider(
-                            minimum=3, maximum=15, value=5, step=2,
-                            label="滤波窗口大小"
-                        )
-                        pp_fix_spikes = gr.Checkbox(
-                            value=True, label="修正速度突变"
-                        )
-                        pp_joint_limits = gr.Checkbox(
-                            value=True, label="关节角度限位"
-                        )
-                        pp_stabilize = gr.Checkbox(
-                            value=True, label="根节点运动稳定"
-                        )
-                        pp_btn = gr.Button("⚡ 执行后处理并导出", variant="primary")
-                    
-                    with gr.Column(scale=2):
-                        pp_report = gr.Markdown(label="处理报告")
-                        pp_download = gr.File(label="下载处理后的 BVH 文件")
-                
-                pp_btn.click(
-                    apply_postprocess,
-                    inputs=[export_bvh, pp_smooth_method, pp_smooth_window,
-                            pp_fix_spikes, pp_joint_limits, pp_stabilize],
-                    outputs=[pp_report, pp_download]
-                )
-            
-            # ---- Tab 5: 3D 可视化 ----
-            with gr.TabItem("🎯 3D 可视化", id="vis3d"):
-                gr.Markdown("### 交互式三维骨架查看器")
-                with gr.Row():
-                    with gr.Column(scale=1):
-                        vis_bvh = gr.Dropdown(
-                            choices=bvh_files,
-                            label="选择 BVH 文件",
-                            allow_custom_value=True,
-                        )
-                        vis_frame = gr.Slider(
-                            minimum=0, maximum=500, value=0, step=1,
-                            label="帧索引"
-                        )
-                        vis_btn = gr.Button("🔍 查看骨架", variant="primary")
+                    demo_bvh_btn.click(load_demo_bvh, inputs=[demo_bvh_dropdown], outputs=[demo_bvh_msg])
+                    demo_mp4_btn.click(load_demo_mp4, inputs=[demo_mp4_dropdown], outputs=[demo_mp4_msg])
+
+                with gr.Accordion("2. 进阶功能演示 · Inbetweening & Harmonization 👇", open=True):
+                    gr.Markdown("""> 🎬 **进阶动作编辑能力演示** — 展示 SinMDM 在敦煌舞领域的 **动作补间 (Inbetweening)** 和 **动作风格和谐化 (Harmonization)** 成果。""")
+                    with gr.Row():
+                        with gr.Column(scale=1):
+                            gr.Markdown("#### 🔗 动作补间 (Inbetweening)")
+                            gr.Markdown("给定动作序列的起始与终止姿态，扩散模型自动生成自然过渡。")
+                            adv_inbetween_video = gr.Video(
+                                label="Inbetweening 演示 · 05-2-JiGuJiYue",
+                                value=r"D:\sinMDM\export_final\video\save\05-2-JiGuJiYue\inbetweening_demo\sample00.mp4",
+                                height=320,
+                            )
+                        with gr.Column(scale=1):
+                            gr.Markdown("#### 🎵 风格和谐化 (Harmonization)")
+                            gr.Markdown("将外源行走动作和谐地融入击鼓击乐风格，保持节奏与姿态一致性。")
+                            adv_harmonize_video = gr.Video(
+                                label="Harmonization 演示 · Walking → JiGuJiYue",
+                                value=r"D:\sinMDM\export_final\video\save\05-2-JiGuJiYue\harmonization_walking\sample01.mp4",
+                                height=320,
+                            )
+                    with gr.Row():
+                        with gr.Column():
+                            gr.Markdown("""
+                            ---
+                            | 功能 | 技术原理 | 输入 | 输出 |
+                            |------|---------|------|------|
+                            | **Inbetweening** | 条件扩散 · 固定首尾帧 → 去噪扩散填充中间帧 | 起止关键姿态 | 平滑过渡动作序列 |
+                            | **Harmonization** | 风格迁移 · 外源动作注入后，梯度引导匹配目标分布 | 外源动作 + 风格参考 | 和谐化动作序列 |
+                            """)
+
+                with gr.Accordion("3. 实时生成引擎 👇", open=False):
+                    gr.Markdown("> 基于已有参数模型实时生成新动作。")
+                    with gr.Row():
+                        with gr.Column(scale=1):
+                            scan_models_btn = gr.Button("🩺 刷新并加载已训练的 SinMDM 参数", variant="secondary")
+                            gen_model = gr.Dropdown(choices=get_available_models(), label="选择扩散模型 (Checkpoint)", allow_custom_value=True)
+                            with gr.Row():
+                                gen_samples = gr.Slider(minimum=1, maximum=10, value=3, step=1, label="采样批次 (Samples)")
+                                gen_length = gr.Slider(minimum=2.0, maximum=30.0, value=10.0, step=0.5, label="合成长度 (Seconds)")
+                            with gr.Row():
+                                gen_diversity = gr.Slider(minimum=0.1, maximum=2.0, value=1.0, step=0.1, label="扰动/多样性 (Diversity)")
+                                gen_seed = gr.Number(value=-1, label="全局种子 (-1=随机)", precision=0)
+                                
+                            gen_btn = gr.Button("✨ 生成骨骼动作", variant="primary")
+                            model_scan_report = gr.Markdown()
                         
-                        gr.Markdown("### 对比回放")
-                        vis_orig = gr.Dropdown(
-                            choices=bvh_files,
-                            label="原始动作 BVH",
-                            allow_custom_value=True,
-                        )
-                        vis_gen = gr.Dropdown(
-                            choices=bvh_files,
-                            label="生成动作 BVH",
-                            allow_custom_value=True,
-                        )
-                        vis_compare_frame = gr.Slider(
-                            minimum=0, maximum=500, value=0, step=1,
-                            label="对比帧"
-                        )
-                        vis_compare_btn = gr.Button("⚡ 并排对比", variant="secondary")
+                        with gr.Column(scale=1):
+                            gen_output = gr.Markdown("等待生成...")
+                            gen_preview_file = gr.File(label="获取生成源文件 (BVH/MP4)")
+                        with gr.Column(scale=1):
+                            gen_video = gr.Video(label="生成效果前瞻 (MP4)", height=250)
                     
-                    with gr.Column(scale=2):
-                        vis_plot = gr.Plot(label="3D 骨架查看")
-                        vis_compare_plot = gr.Plot(label="对比查看")
+                    scan_models_btn.click(scan_saved_models_ui, outputs=[model_scan_report, gen_model])
+                    gen_btn.click(generate_motion, inputs=[gen_model, gen_samples, gen_length, gen_seed, gen_diversity], outputs=[gen_output, gr.Textbox(visible=False), gen_video, gen_preview_file])
                 
-                def view_skeleton(bvh_path, frame_idx):
-                    if not bvh_path or not os.path.exists(bvh_path):
-                        return None
-                    try:
-                        return visualize_bvh(bvh_path, int(frame_idx))
-                    except Exception as e:
-                        return None
-                
-                def compare_skeletons(orig_path, gen_path, frame_idx):
-                    if not orig_path or not gen_path:
-                        return None
-                    try:
-                        return compare_bvh(orig_path, gen_path, int(frame_idx))
-                    except Exception as e:
-                        return None
-                
-                vis_btn.click(view_skeleton, inputs=[vis_bvh, vis_frame], outputs=[vis_plot])
-                vis_compare_btn.click(
-                    compare_skeletons, 
-                    inputs=[vis_orig, vis_gen, vis_compare_frame], 
-                    outputs=[vis_compare_plot]
-                )
-            
-            # ---- Tab 6: 项目管理 ----
-            with gr.TabItem("📂 项目管理", id="projects"):
-                gr.Markdown("### 项目式任务管理")
-                gr.Markdown("> 以项目为单位管理不同舞蹈片段的生成任务")
+                with gr.Accordion("4. 生成结果 3D 对比 👇", open=False):
+                    with gr.Row():
+                        with gr.Column(scale=1):
+                            vis_orig = gr.Dropdown(choices=bvh_files, label="参演角色 A (参考)", allow_custom_value=True)
+                            vis_gen = gr.Dropdown(choices=bvh_files, label="参演角色 B (生成)", allow_custom_value=True)
+                            vis_compare_frame = gr.Slider(minimum=0, maximum=500, value=0, step=1, label="全局同步时间轴")
+                            vis_compare_btn = gr.Button("⚡ 同步投射对比", variant="primary")
+                        with gr.Column(scale=2):
+                            vis_compare_plot = gr.Plot(label="并行视场")
+                    def compare_skeletons(orig, gen, frame):
+                        return compare_bvh(orig, gen, int(frame)) if orig and gen else None
+                    vis_compare_btn.click(compare_skeletons, inputs=[vis_orig, vis_gen, vis_compare_frame], outputs=[vis_compare_plot])
+
+            # ==========================================
+            # 模块二：【🎨 风格迁移与约束】
+            # ==========================================
+            with gr.TabItem("🎨 风格迁移与约束", id="style_engine"):
+                gr.Markdown("### 🎨 风格引擎与精细控制 (基于流形或直接运动学限定)")
+                gr.Markdown("> 直接将特色风格(如：飞天的 S 曲线、反弹琵琶的舒展度) 映射到目标动作上。建议选用 `export_final/export` 中的优质 BVH 作为风格源。")
                 
                 with gr.Row():
-                    with gr.Column(scale=1):
-                        proj_name = gr.Textbox(
-                            label="项目名称",
-                            placeholder="例: 飞天_动作生成"
-                        )
-                        proj_bvh = gr.Dropdown(
-                            choices=bvh_files,
-                            label="关联数据 (BVH)",
-                            allow_custom_value=True,
-                        )
-                        proj_notes = gr.Textbox(
-                            label="备注",
-                            lines=3,
-                            placeholder="项目说明..."
-                        )
+                    with gr.Column(scale=4):
+                        gr.Markdown("**【模式 A】基于参考标本的风格转移**")
+                        style_source_file = gr.File(label="📂 待处理目标动作 (Source)", file_types=[".bvh"])
+                        style_ref_file = gr.File(label="📂 风格提供者动作 (Reference)", file_types=[".bvh"])
                         with gr.Row():
-                            proj_new_btn = gr.Button("🆕 新建项目", variant="primary")
-                            proj_save_btn = gr.Button("💾 保存进度")
+                            style_arm_slider = gr.Slider(minimum=0, maximum=1.0, value=0.5, step=0.1, label="🦾 上肢舒展力度")
+                            style_spine_slider = gr.Slider(minimum=0, maximum=1.0, value=0.5, step=0.1, label="🐍 核心 S 形弯曲")
+                            style_rhythm_slider = gr.Slider(minimum=0, maximum=1.0, value=0.3, step=0.1, label="🎵 顿挫/断点停顿")
+                        with gr.Row():
+                            style_amplitude_slider = gr.Slider(minimum=0, maximum=1.0, value=0.4, step=0.1, label="📊 上下半身发力比")
+                            style_symmetry_slider = gr.Slider(minimum=0, maximum=1.0, value=0.3, step=0.1, label="⚖️ 镜像破除/对称感")
+                            style_global_slider = gr.Slider(minimum=0, maximum=2.0, value=1.0, step=0.1, label="🎛️ 整体转移倍率")
+                        style_transfer_btn = gr.Button("🔄 注入参考风格", variant="primary")
+
+                    with gr.Column(scale=3):
+                        gr.Markdown("**【模式 B】基于数值的几何强约束**")
+                        constraint_source_file = gr.File(label="📂 待处理片段", file_types=[".bvh"])
+                        with gr.Row():
+                            c_arm = gr.Slider(minimum=50, maximum=200, value=110, step=5, label="目标展臂张角(°)")
+                            c_spine = gr.Slider(minimum=50, maximum=400, value=250, step=10, label="目标脊柱曲度(°)")
+                        with gr.Row():
+                            c_ratio = gr.Slider(minimum=0.5, maximum=3.0, value=1.3, step=0.1, label="上下身挥动比")
+                            c_pause = gr.Slider(minimum=0, maximum=60, value=12, step=1, label="静帧占用率(%)")
+                        with gr.Row():
+                            c_symmetry = gr.Slider(minimum=0.0, maximum=1.0, value=0.6, step=0.05, label="刚体对称系数")
+                            c_strength = gr.Slider(minimum=0, maximum=1.0, value=0.5, step=0.1, label="约束强制力")
+                        constraint_btn = gr.Button("⚡ 应用几何限定", variant="secondary")
                         
-                        gr.Markdown("### 历史项目")
-                        proj_list = gr.Dropdown(
-                            label="打开项目",
-                            choices=[],
-                        )
-                        proj_open_btn = gr.Button("📂 打开")
-                    
                     with gr.Column(scale=2):
-                        proj_info = gr.Markdown(label="项目信息")
-                
-                def new_project(name, bvh, notes):
-                    if not name:
-                        return "❌ 请输入项目名称"
-                    proj_data = {
-                        "name": name,
-                        "bvh_path": bvh or "",
-                        "notes": notes or "",
-                        "created": str(np.datetime64('now')),
-                        "status": "已创建",
-                    }
-                    proj_file = os.path.join(PROJECT_DIR, f"{name}.json")
-                    with open(proj_file, 'w', encoding='utf-8') as f:
-                        json.dump(proj_data, f, ensure_ascii=False, indent=2)
-                    return f"✅ 项目 **{name}** 已创建\n\n📄 配置文件: `{proj_file}`"
-                
-                def save_project(name, bvh, notes):
-                    if not name:
-                        return "❌ 请输入项目名称"
-                    proj_file = os.path.join(PROJECT_DIR, f"{name}.json")
-                    proj_data = {}
-                    if os.path.exists(proj_file):
-                        with open(proj_file, 'r', encoding='utf-8') as f:
-                            proj_data = json.load(f)
-                    proj_data.update({
-                        "name": name,
-                        "bvh_path": bvh or proj_data.get("bvh_path", ""),
-                        "notes": notes or proj_data.get("notes", ""),
-                        "last_saved": str(np.datetime64('now')),
-                        "status": "进行中",
-                    })
-                    with open(proj_file, 'w', encoding='utf-8') as f:
-                        json.dump(proj_data, f, ensure_ascii=False, indent=2)
-                    return f"✅ 项目 **{name}** 已保存"
-                
-                def list_projects():
-                    projs = glob.glob(os.path.join(PROJECT_DIR, "*.json"))
-                    return [Path(p).stem for p in projs]
-                
-                def open_project(name):
-                    if not name:
-                        return "❌ 请选择项目"
-                    proj_file = os.path.join(PROJECT_DIR, f"{name}.json")
-                    if not os.path.exists(proj_file):
-                        return "❌ 项目文件不存在"
-                    with open(proj_file, 'r', encoding='utf-8') as f:
-                        data = json.load(f)
-                    info = f"## 📂 项目: {data.get('name', name)}\n\n"
-                    info += f"| 属性 | 值 |\n|---|---|\n"
-                    for k, v in data.items():
-                        info += f"| {k} | {v} |\n"
-                    return info
-                
-                proj_new_btn.click(new_project, inputs=[proj_name, proj_bvh, proj_notes], outputs=[proj_info])
-                proj_save_btn.click(save_project, inputs=[proj_name, proj_bvh, proj_notes], outputs=[proj_info])
-                proj_open_btn.click(open_project, inputs=[proj_list], outputs=[proj_info])
-                app.load(lambda: gr.update(choices=list_projects()), outputs=[proj_list])
-            
-            # ---- Tab 7: 视频姿态估计 ----
-            with gr.TabItem("🎥 视频姿态估计", id="pose"):
-                gr.Markdown("""### 视频到姿态序列提取
-> 从敦煌舞视频中提取骨骼关键点序列，转化为可训练的 BVH 数据
-""")
-                with gr.Row():
-                    with gr.Column(scale=1):
-                        pose_video = gr.File(
-                            label="上传视频 (MP4/AVI)",
-                            file_types=[".mp4", ".avi", ".mov"],
-                        )
-                        pose_method = gr.Radio(
-                            choices=["MediaPipe", "OpenPose"],
-                            value="MediaPipe",
-                            label="姿态估计方法",
-                            info="MediaPipe: 轻量/易部署 | OpenPose: 精度高"
-                        )
-                        pose_fps = gr.Slider(
-                            minimum=15, maximum=60, value=30, step=5,
-                            label="输出帧率"
-                        )
-                        pose_openpose_bin = gr.Textbox(
-                            label="OpenPose 可执行文件 (可选)",
-                            placeholder="留空则读取 OPENPOSE_BIN / OPENPOSE_ROOT",
-                        )
-                        pose_btn = gr.Button("🦴 提取姿态", variant="primary")
-                    
-                    with gr.Column(scale=2):
-                        pose_output = gr.Markdown()
-                        pose_download = gr.File(label="导出 BVH")
-                
-                def extract_pose(video_file, method, fps, openpose_bin):
-                    if video_file is None:
-                        return "❌ 请先上传视频文件", None
+                        gr.Markdown("**结果导出区**")
+                        style_result_output = gr.Markdown("无活动")
+                        style_download_file = gr.File(label="⬇️ 获取风格化结果 (BVH)")
 
-                    video_path = _coerce_local_path(video_file)
-                    output_dir = Path(OUTPUT_DIR) / "pose_bvh"
-                    output_dir.mkdir(parents=True, exist_ok=True)
-                    output_path = output_dir / f"{Path(video_path).stem}_{_timestamp()}.bvh"
-
+                # 风格迁移的逻辑引用
+                def run_style_transfer_ui(src, ref, arm, spine, rhythm, amp, sym, glob):
+                    if src is None or ref is None: return "❌ 缺失 BVH 源", None
                     try:
-                        result = extract_video_to_bvh(
-                            video_path=video_path,
-                            output_path=str(output_path),
-                            method=method,
-                            target_fps=float(fps),
-                            openpose_bin=(openpose_bin or "").strip() or None,
-                        )
-                    except Exception as e:
-                        info = f"""## ❌ 姿态提取失败
-
-| 参数 | 值 |
-|------|-----|
-| **视频** | `{Path(video_path).name}` |
-| **方法** | {method} |
-| **帧率** | {fps} FPS |
-
-```text
-{e}
-```
-"""
-                        return info, None
-
-                    notes = ""
-                    if result.notes:
-                        notes = "\n### 处理说明\n" + "\n".join([f"- {note}" for note in result.notes])
-
-                    info = f"""## ✅ 视频姿态提取完成
-
-| 参数 | 值 |
-|------|-----|
-| **视频** | `{Path(video_path).name}` |
-| **请求方法** | {result.method_requested} |
-| **实际方法** | {result.method_used} |
-| **源帧率** | {result.source_fps:.2f} FPS |
-| **输出帧率** | {result.output_fps:.2f} FPS |
-| **有效帧数** | {result.frames_processed} |
-| **补帧/丢帧数** | {result.dropped_frames} |
-| **平均可见度** | {result.avg_visibility:.3f} |
-| **动作时长** | {result.duration:.2f} 秒 |
-| **输出 BVH** | `{result.output_bvh_path}` |
-
-### 下一步
-
-该 BVH 已可直接用于：
-- 数据分析与 3D 预览
-- 单序列 SinMDM 训练
-- 后处理与风格迁移
-{notes}
-"""
-                    return info, result.output_bvh_path
-                
-                pose_btn.click(
-                    extract_pose,
-                    inputs=[pose_video, pose_method, pose_fps, pose_openpose_bin],
-                    outputs=[pose_output, pose_download],
-                )
-
-            # ---- Tab 8: 数据集构建 ----
-            with gr.TabItem("🗂️ 数据集构建", id="dataset"):
-                gr.Markdown("""### 训练/验证集组织与切片
-> 将长时 BVH 动作切分为规范化 clip，并导出确定性的 train/val 列表
-""")
-                with gr.Row():
-                    with gr.Column(scale=1):
-                        dataset_source_root = gr.Textbox(
-                            value=DATASET_DIR,
-                            label="BVH 数据根目录",
-                            placeholder="例如: 敦煌舞三维动作数据集/长动作",
-                        )
-                        dataset_clip_seconds = gr.Slider(
-                            minimum=2.0, maximum=12.0, value=4.0, step=0.5,
-                            label="clip 时长 (秒)"
-                        )
-                        dataset_overlap_seconds = gr.Slider(
-                            minimum=0.0, maximum=6.0, value=1.0, step=0.5,
-                            label="clip 重叠 (秒)"
-                        )
-                        dataset_min_seconds = gr.Slider(
-                            minimum=1.0, maximum=6.0, value=2.0, step=0.5,
-                            label="最小保留时长 (秒)"
-                        )
-                        dataset_val_ratio = gr.Slider(
-                            minimum=0.05, maximum=0.5, value=0.2, step=0.05,
-                            label="验证集比例"
-                        )
-                        dataset_btn = gr.Button("📦 构建数据集", variant="primary")
-
-                    with gr.Column(scale=2):
-                        dataset_output = gr.Markdown()
-                        dataset_package = gr.File(label="下载数据集包 (ZIP)")
-
-                dataset_btn.click(
-                    build_dataset_package,
-                    inputs=[
-                        dataset_source_root,
-                        dataset_clip_seconds,
-                        dataset_overlap_seconds,
-                        dataset_min_seconds,
-                        dataset_val_ratio,
-                    ],
-                    outputs=[dataset_output, dataset_package],
-                )
-
-            # ---- Tab 9: 教学分析与外部联动 ----
-            with gr.TabItem("🎓 教学分析与联动", id="teaching"):
-                gr.Markdown("""### 教学拆解 / 难度分级 / 外部专业工具联动
-> 系统内完成拆解和导出，专业播放与精修可一键交给 Blender
-""")
-                with gr.Row():
-                    with gr.Column(scale=1):
-                        teach_bvh = gr.Dropdown(
-                            choices=scan_bvh_files(),
-                            label="选择 BVH 文件",
-                            allow_custom_value=True,
-                        )
-                        teach_segment_seconds = gr.Slider(
-                            minimum=1.5, maximum=8.0, value=3.0, step=0.5,
-                            label="目标分段时长 (秒)"
-                        )
-                        teach_min_seconds = gr.Slider(
-                            minimum=1.0, maximum=4.0, value=1.5, step=0.5,
-                            label="最小分段时长 (秒)"
-                        )
-                        teach_slow_factor = gr.Slider(
-                            minimum=1.0, maximum=4.0, value=2.0, step=0.5,
-                            label="慢放倍数"
-                        )
-                        teach_btn = gr.Button("🧭 生成教学包", variant="primary")
-
-                        gr.Markdown("### Blender 联动")
-                        blender_path = gr.Textbox(
-                            label="Blender 可执行文件 (可选)",
-                            placeholder="留空则自动搜索系统中的 Blender",
-                        )
-                        blender_btn = gr.Button("🧱 用 Blender 打开 BVH", variant="secondary")
-
-                    with gr.Column(scale=2):
-                        teach_output = gr.Markdown()
-                        teach_package = gr.File(label="教学包 (ZIP)")
-                        teach_slow_bvh = gr.File(label="慢放 BVH")
-                        blender_output = gr.Markdown()
-
-                teach_btn.click(
-                    generate_teaching_package,
-                    inputs=[teach_bvh, teach_segment_seconds, teach_min_seconds, teach_slow_factor],
-                    outputs=[teach_output, teach_package, teach_slow_bvh],
-                )
-                blender_btn.click(
-                    open_bvh_in_blender,
-                    inputs=[teach_slow_bvh, teach_bvh, blender_path],
-                    outputs=[blender_output],
-                )
-            
-            # ---- 风格迁移与约束 ----
-            with gr.Accordion("🎨 风格迁移与约束", open=True):
-                gr.Markdown("""### 敦煌舞风格迁移与可控约束
-                
-将参考动作的风格特征(如上肢舒展度、脊柱 S 曲线)迁移到生成动作上,
-或通过滑块直接控制目标风格参数。输出为**修改后的 BVH 文件**。
-""")
-                
-                with gr.Row():
-                    with gr.Column(scale=1):
-                        gr.Markdown("#### 输入选择")
-                        
-                        # BVH 文件选择
-                        style_source_file = gr.File(
-                            label="📂 源动作 BVH (要修改的)",
-                            file_types=[".bvh"]
-                        )
-                        style_ref_file = gr.File(
-                            label="📂 参考动作 BVH (风格来源)",
-                            file_types=[".bvh"]
-                        )
-                        
-                        gr.Markdown("#### 风格迁移强度")
-                        style_arm_slider = gr.Slider(
-                            minimum=0, maximum=1.0, value=0.5, step=0.1,
-                            label="🦾 上肢舒展度迁移"
-                        )
-                        style_spine_slider = gr.Slider(
-                            minimum=0, maximum=1.0, value=0.5, step=0.1,
-                            label="🐍 脊柱 S 曲线迁移"
-                        )
-                        style_rhythm_slider = gr.Slider(
-                            minimum=0, maximum=1.0, value=0.3, step=0.1,
-                            label="🎵 节奏停顿迁移"
-                        )
-                        style_amplitude_slider = gr.Slider(
-                            minimum=0, maximum=1.0, value=0.4, step=0.1,
-                            label="📊 动作幅度迁移"
-                        )
-                        style_symmetry_slider = gr.Slider(
-                            minimum=0, maximum=1.0, value=0.3, step=0.1,
-                            label="⚖️ 左右对称性迁移"
-                        )
-                        style_global_slider = gr.Slider(
-                            minimum=0, maximum=2.0, value=1.0, step=0.1,
-                            label="🎛️ 全局强度系数"
-                        )
-                        
-                        style_transfer_btn = gr.Button("🔄 执行风格迁移", variant="primary")
-                    
-                    with gr.Column(scale=1):
-                        gr.Markdown("#### 直接风格约束 (无需参考动作)")
-                        
-                        constraint_source_file = gr.File(
-                            label="📂 待约束 BVH 文件",
-                            file_types=[".bvh"]
-                        )
-                        
-                        c_arm = gr.Slider(
-                            minimum=50, maximum=200, value=110, step=5,
-                            label="目标上肢舒展度 (°)"
-                        )
-                        c_spine = gr.Slider(
-                            minimum=50, maximum=400, value=250, step=10,
-                            label="目标脊柱弯曲度 (°)"
-                        )
-                        c_ratio = gr.Slider(
-                            minimum=0.5, maximum=3.0, value=1.3, step=0.1,
-                            label="目标上下身幅度比"
-                        )
-                        c_pause = gr.Slider(
-                            minimum=0, maximum=60, value=12, step=1,
-                            label="目标停顿占比 (%)"
-                        )
-                        c_symmetry = gr.Slider(
-                            minimum=0.0, maximum=1.0, value=0.6, step=0.05,
-                            label="目标整体对称性 (0~1)"
-                        )
-                        c_strength = gr.Slider(
-                            minimum=0, maximum=1.0, value=0.5, step=0.1,
-                            label="🎛️ 约束强度"
-                        )
-                        
-                        constraint_btn = gr.Button("⚡ 应用风格约束", variant="secondary")
-
-                with gr.Row():
-                    with gr.Column(scale=1):
-                        gr.Markdown("#### 风格混合 (两段动作线性混合)")
-                        blend_a_file = gr.File(
-                            label="📂 动作 A BVH",
-                            file_types=[".bvh"]
-                        )
-                        blend_b_file = gr.File(
-                            label="📂 动作 B BVH",
-                            file_types=[".bvh"]
-                        )
-                        blend_weight = gr.Slider(
-                            minimum=0.0, maximum=1.0, value=0.5, step=0.1,
-                            label="混合权重 (0=全A, 1=全B)"
-                        )
-                        blend_btn = gr.Button("🧪 执行风格混合", variant="secondary")
-                
-                with gr.Row():
-                    style_result_output = gr.Markdown()
-                    style_download_file = gr.File(label="⬇️ 下载修改后的 BVH")
-                
-                def run_style_transfer(source_file, ref_file, arm_s, spine_s, rhythm_s, amp_s, symmetry_s, global_s):
-                    if source_file is None or ref_file is None:
-                        return "❌ 请上传源动作和参考动作 BVH 文件", None
-                    
-                    try:
-                        from dunhuang_dance_gen.postprocess.style_transfer import (
-                            DunhuangStyleTransfer, StyleTransferConfig
-                        )
+                        from dunhuang_dance_gen.postprocess.style_transfer import DunhuangStyleTransfer, StyleTransferConfig
                         from dunhuang_dance_gen.export.bvh_writer import BVHWriter
-                        
-                        src = load_bvh(source_file.name if hasattr(source_file, 'name') else str(source_file))
-                        ref = load_bvh(ref_file.name if hasattr(ref_file, 'name') else str(ref_file))
-                        
-                        cfg = StyleTransferConfig(
-                            arm_extension_strength=arm_s,
-                            spine_curvature_strength=spine_s,
-                            rhythm_strength=rhythm_s,
-                            amplitude_strength=amp_s,
-                            symmetry_strength=symmetry_s,
-                            global_strength=global_s,
-                        )
-                        
-                        transfer = DunhuangStyleTransfer(fps=30.0)
-                        result = transfer.transfer(
-                            src.rotations, src.positions, ref.rotations, cfg
-                        )
-                        
-                        # 导出修改后的 BVH
                         import tempfile, copy
-                        out_path = os.path.join(tempfile.gettempdir(), "style_transferred.bvh")
-                        writer = BVHWriter()
-                        out_data = copy.copy(src)
-                        out_data.rotations = result.rotations
-                        out_data.positions = result.positions
-                        writer.write_from_bvhdata(out_path, out_data)
-                        
-                        # 报告
-                        report = f"""### ✅ 风格迁移完成
-
-| 指标 | 源动作 | 参考动作 | 迁移结果 |
-|------|--------|---------|---------|
-| 上肢舒展度(°) | {result.source_style.left_arm_extension_mean:.1f} | {result.target_style.left_arm_extension_mean:.1f} | {result.result_style.left_arm_extension_mean:.1f} |
-| 脊柱弯曲度(°) | {result.source_style.spine_curvature_mean:.1f} | {result.target_style.spine_curvature_mean:.1f} | {result.result_style.spine_curvature_mean:.1f} |
-| 停顿占比(%) | {result.source_style.pause_ratio:.1f} | {result.target_style.pause_ratio:.1f} | {result.result_style.pause_ratio:.1f} |
-| 上下身幅度比 | {result.source_style.upper_lower_ratio:.2f} | {result.target_style.upper_lower_ratio:.2f} | {result.result_style.upper_lower_ratio:.2f} |
-| 整体对称性 | {result.source_style.overall_symmetry:.3f} | {result.target_style.overall_symmetry:.3f} | {result.result_style.overall_symmetry:.3f} |
-
-输出帧数: {result.rotations.shape[0]}, 关节数: {result.rotations.shape[1]}
-"""
-                        return report, out_path
+                        s = load_bvh(src.name)
+                        r = load_bvh(ref.name)
+                        cfg = StyleTransferConfig(arm, spine, rhythm, amp, sym, glob)
+                        res = DunhuangStyleTransfer(fps=30.0).transfer(s.rotations, s.positions, r.rotations, cfg)
+                        out_path = os.path.join(tempfile.gettempdir(), f"styled_{_timestamp()}.bvh")
+                        out_data = copy.copy(s)
+                        out_data.rotations = res.rotations
+                        out_data.positions = res.positions
+                        BVHWriter().write_from_bvhdata(out_path, out_data)
+                        return f"""### ✅ 传递完成\n帧数: {res.rotations.shape[0]}, 对称性变迁: {res.source_style.overall_symmetry:.2f} -> {res.result_style.overall_symmetry:.2f}""", out_path
                     except Exception as e:
-                        return f"❌ 风格迁移失败: {str(e)}", None
-                
-                def run_constraint(source_file, arm_target, spine_target, ratio_target, pause_target, symmetry_target, strength):
-                    if source_file is None:
-                        return "❌ 请上传 BVH 文件", None
-                    
+                        return f"❌ 错误: {e}", None
+
+                def run_constraint_ui(src, a, s_p, r, p, s_y, s_t):
+                    if src is None: return "❌ 缺失 BVH 源", None
                     try:
                         from dunhuang_dance_gen.postprocess.style_transfer import StyleConstraintApplicator
                         from dunhuang_dance_gen.export.bvh_writer import BVHWriter
-                        
-                        src = load_bvh(source_file.name if hasattr(source_file, 'name') else str(source_file))
-                        
-                        applicator = StyleConstraintApplicator(fps=30.0)
-                        mod_rot, mod_pos, change_report = applicator.apply(
-                            src.rotations, src.positions,
-                            target_arm_extension=arm_target,
-                            target_spine_curvature=spine_target,
-                            target_upper_lower_ratio=ratio_target,
-                            target_pause_ratio=pause_target,
-                            target_symmetry=symmetry_target,
-                            constraint_strength=strength,
-                        )
-                        
                         import tempfile, copy
-                        out_path = os.path.join(tempfile.gettempdir(), "style_constrained.bvh")
-                        writer = BVHWriter()
-                        out_data = copy.copy(src)
+                        s = load_bvh(src.name)
+                        mod_rot, mod_pos, rep = StyleConstraintApplicator(fps=30.0).apply(s.rotations, s.positions, a, s_p, r, p, s_y, s_t)
+                        out_path = os.path.join(tempfile.gettempdir(), f"constrained_{_timestamp()}.bvh")
+                        out_data = copy.copy(s)
                         out_data.rotations = mod_rot
                         out_data.positions = mod_pos
-                        writer.write_from_bvhdata(out_path, out_data)
-                        
-                        # 往返验证
-                        reloaded = load_bvh(out_path)
-                        
-                        report = "### ✅ 风格约束已应用\n\n"
-                        report += "| 维度 | 变化 |\n|------|------|\n"
-                        for k, v in change_report.items():
-                            report += f"| {k} | {v} |\n"
-                        report += f"\n输出帧数: {mod_rot.shape[0]}, 关节数: {mod_rot.shape[1]}"
-                        report += f"\n\n✅ BVH 往返验证通过 (重加载 {reloaded.num_frames} 帧, {reloaded.num_joints} 关节)"
-                        
-                        return report, out_path
-                    except Exception as e:
-                        return f"❌ 约束应用失败: {str(e)}", None
-
-                def run_style_blend(file_a, file_b, weight):
-                    if file_a is None or file_b is None:
-                        return "❌ 请上传动作 A 和动作 B 的 BVH 文件", None
-
-                    try:
-                        import copy
-
-                        src_a = load_bvh(_coerce_local_path(file_a))
-                        src_b = load_bvh(_coerce_local_path(file_b))
-                        mixed = style_blend(src_a.rotations, src_b.rotations, float(weight))
-
-                        out_data = copy.copy(src_a)
-                        out_data.rotations = mixed
-                        out_data.positions = src_a.positions[: mixed.shape[0]].copy()
-                        out_data.num_frames = mixed.shape[0]
-
-                        out_path = os.path.join(tempfile.gettempdir(), "style_blended.bvh")
                         BVHWriter().write_from_bvhdata(out_path, out_data)
-
-                        report = f"""### ✅ 风格混合完成
-
-| 参数 | 值 |
-|------|----|
-| 动作 A | `{Path(_coerce_local_path(file_a)).name}` |
-| 动作 B | `{Path(_coerce_local_path(file_b)).name}` |
-| 混合权重 | {float(weight):.2f} |
-| 输出帧数 | {mixed.shape[0]} |
-| 关节数 | {mixed.shape[1]} |
-"""
-                        return report, out_path
+                        return "### ✅ 限定应用", out_path
                     except Exception as e:
-                        return f"❌ 风格混合失败: {str(e)}", None
+                        return f"❌ 错误: {e}", None
+
+                style_transfer_btn.click(run_style_transfer_ui, inputs=[style_source_file, style_ref_file, style_arm_slider, style_spine_slider, style_rhythm_slider, style_amplitude_slider, style_symmetry_slider, style_global_slider], outputs=[style_result_output, style_download_file])
+                constraint_btn.click(run_constraint_ui, inputs=[constraint_source_file, c_arm, c_spine, c_ratio, c_pause, c_symmetry, c_strength], outputs=[style_result_output, style_download_file])
+
+
+
+            # ==========================================
+            # 模块四：【🧠 模型训练与优化】
+            # ==========================================
+            with gr.TabItem("🧠 模型训练与优化", id="training_opt"):
+                gr.Markdown("### 🧠 SinMDM 扩散模型训练流程控制与生成的动作平滑")
                 
-                style_transfer_btn.click(
-                    run_style_transfer,
-                    inputs=[style_source_file, style_ref_file, 
-                            style_arm_slider, style_spine_slider,
-                            style_rhythm_slider, style_amplitude_slider,
-                            style_symmetry_slider, style_global_slider],
-                    outputs=[style_result_output, style_download_file]
-                )
-                constraint_btn.click(
-                    run_constraint,
-                    inputs=[constraint_source_file, c_arm, c_spine, c_ratio, c_pause, c_symmetry, c_strength],
-                    outputs=[style_result_output, style_download_file]
-                )
-                blend_btn.click(
-                    run_style_blend,
-                    inputs=[blend_a_file, blend_b_file, blend_weight],
-                    outputs=[style_result_output, style_download_file]
-                )
-        
+                with gr.Accordion("1. 核心网络训练 👇", open=True):
+                    with gr.Row():
+                        with gr.Column(scale=1):
+                            train_bvh = gr.Dropdown(choices=get_available_bvh_for_training(), label="单序列训练数据", info="此架构在极少样本下即可进行针对性过拟合", allow_custom_value=True)
+                            with gr.Row():
+                                train_arch = gr.Radio(choices=["qna", "unet"], value="qna", label="网络主干", info="QnA: 注意力流 | UNet: 传统卷积")
+                                train_lr_gamma = gr.Number(value=0.99998, label="策略: 学习率 Gamma", precision=5)
+                            with gr.Row():
+                                train_steps = gr.Slider(minimum=5000, maximum=50000, value=20000, step=1000, label="迭代步数 (Iterations)")
+                                train_save_interval = gr.Slider(minimum=1000, maximum=10000, value=2500, step=500, label="检查点频率")
+                            train_gen = gr.Checkbox(value=True, label="训练期间渲染预览动画")
+                            train_btn = gr.Button("🚀 后台提交训练任务", variant="primary")
+                        with gr.Column(scale=2):
+                            train_output = gr.Markdown(label="作业调度结果")
+                            train_cmd = gr.Textbox(label="后台实际执行指令 (WSL环境兼容)", interactive=False, lines=2)
+                    
+                    train_btn.click(start_training, inputs=[train_bvh, train_steps, train_save_interval, train_arch, train_lr_gamma, train_gen], outputs=[train_output, train_cmd])
+                
+                with gr.Accordion("2. 运动学后处理与优化 👇", open=False):
+                    gr.Markdown("> 消除模型生成特有的高频微抖、地平线穿模以及不符合解剖学的速度突变。")
+                    with gr.Row():
+                        with gr.Column(scale=1):
+                            export_bvh_dropdown = gr.Dropdown(choices=scan_export_final_bvh(), label="选择待修补的生成资产", allow_custom_value=True)
+                            with gr.Row():
+                                pp_smooth_method = gr.Radio(choices=["savgol", "gaussian", "none"], value="savgol", label="降噪算法")
+                                pp_smooth_window = gr.Slider(minimum=3, maximum=15, value=5, step=2, label="核大小")
+                            with gr.Row():
+                                pp_fix_spikes = gr.Checkbox(value=True, label="极值速度截断修复")
+                                pp_joint_limits = gr.Checkbox(value=True, label="人体运动学角位限制")
+                                pp_stabilize = gr.Checkbox(value=True, label="重心锚定稳态约束")
+                            pp_btn = gr.Button("⚡ 执行管线清洗并打包", variant="primary")
+                        with gr.Column(scale=2):
+                            pp_report = gr.Markdown()
+                            pp_download = gr.File(label="获取纯净 BVH (Cleaned)")
+                    pp_btn.click(apply_postprocess, inputs=[export_bvh_dropdown, pp_smooth_method, pp_smooth_window, pp_fix_spikes, pp_joint_limits, pp_stabilize], outputs=[pp_report, pp_download])
+
+
+
         gr.Markdown("""
         ---
         <center>

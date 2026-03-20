@@ -268,6 +268,7 @@ def main():
                     quats = one_sample[:, :, 3:]
                 anim = Animation(rotations=Quaternions(quats), positions=one_sample[:, :, :3],
                                  orients=sin_anim.orients, offsets=sin_anim.offsets, parents=sin_anim.parents)
+                BVH.save(os.path.expanduser(bvh_path), anim, joint_names, frametime, positions=True)
 
             xyz_samples[i] = anim_pos(anim)  # n_frames x n_joints x 3  =>
         sample = xyz_samples.transpose(0, 2, 3,
